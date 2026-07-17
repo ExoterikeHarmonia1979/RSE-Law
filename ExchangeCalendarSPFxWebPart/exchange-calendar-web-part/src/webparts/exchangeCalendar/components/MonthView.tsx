@@ -3,6 +3,7 @@ import { Link } from '@fluentui/react';
 import styles from './MonthView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { getMonthGridDays, isSameDay } from '../utils/dateUtils';
+import { getEventColor } from '../styles/brandColors';
 
 export interface IMonthViewProps {
   currentDate: Date;
@@ -41,10 +42,11 @@ const MonthView: React.FunctionComponent<IMonthViewProps> = ({ currentDate, even
           return (
             <div key={day.toISOString()} className={cellClassName}>
               <div className={styles.dayNumber}>{day.getDate()}</div>
-              {visibleEvents.map((event) => (
+              {visibleEvents.map((event, index) => (
                 <Link
                   key={event.id}
                   className={styles.eventChip}
+                  style={{ backgroundColor: getEventColor(index) }}
                   onClick={() => onEventClick(event)}
                   title={event.subject}
                 >

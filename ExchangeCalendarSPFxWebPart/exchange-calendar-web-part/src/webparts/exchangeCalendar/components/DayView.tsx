@@ -2,6 +2,7 @@ import * as React from 'react';
 import styles from './DayView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { isSameDay } from '../utils/dateUtils';
+import { getEventColor } from '../styles/brandColors';
 
 export interface IDayViewProps {
   currentDate: Date;
@@ -22,7 +23,9 @@ function formatTimeRange(event: ICalendarEvent): string {
 }
 
 const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, onEventClick }) => {
-  const dayEvents = events.filter((e) => isSameDay(e.start, currentDate));
+  const dayEvents = events
+    .filter((e) => isSameDay(e.start, currentDate))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
   const allDayEvents = dayEvents.filter((e) => e.isAllDay);
   const timedEvents = dayEvents.filter((e) => !e.isAllDay);
 
@@ -30,8 +33,14 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
     <div className={styles.dayView}>
       {allDayEvents.length > 0 && (
         <div className={styles.allDayRow}>
-          {allDayEvents.map((event) => (
-            <button key={event.id} type="button" className={styles.eventChip} onClick={() => onEventClick(event)}>
+          {allDayEvents.map((event, index) => (
+            <button
+              key={event.id}
+              type="button"
+              className={styles.eventChip}
+              style={{ backgroundColor: getEventColor(index) }}
+              onClick={() => onEventClick(event)}
+            >
               {event.subject}
             </button>
           ))}
@@ -48,7 +57,7 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
           {HOURS.map((hour) => (
             <div key={hour} className={styles.hourCell} style={{ height: HOUR_HEIGHT }} />
           ))}
-          {timedEvents.map((event) => {
+          {timedEvents.map((event, index) => {
             const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
             const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
             return (
@@ -58,7 +67,8 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
                 className={styles.timedEvent}
                 style={{
                   top: (startMinutes / 60) * HOUR_HEIGHT,
-                  height: (durationMinutes / 60) * HOUR_HEIGHT
+                  height: (durationMinutes / 60) * HOUR_HEIGHT,
+                  backgroundColor: getEventColor(index)
                 }}
                 onClick={() => onEventClick(event)}
               >

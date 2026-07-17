@@ -69,9 +69,12 @@ $timeGutterWidth: 56px;
   padding: 1px 5px;
   margin-bottom: 2px;
   border-radius: 2px;
-  background-color: $rse-navy;
   color: #fff !important;
   border-left: 2px solid $rse-gold;
+
+  &:hover {
+    filter: brightness(85%);
+  }
 }
 
 .timeGrid {
@@ -109,7 +112,6 @@ $timeGutterWidth: 56px;
   text-align: left;
   padding: 2px 4px;
   border-radius: 2px;
-  background-color: $rse-navy;
   color: #fff;
   border: none;
   border-left: 3px solid $rse-gold;
@@ -117,6 +119,6 @@ $timeGutterWidth: 56px;
   cursor: pointer;
 
   &:hover {
-    background-color: $rse-navy-dark;
+    filter: brightness(85%);
   }
 }

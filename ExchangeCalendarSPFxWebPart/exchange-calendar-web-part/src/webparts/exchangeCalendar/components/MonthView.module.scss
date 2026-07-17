@@ -70,7 +70,6 @@
   padding: 2px 5px;
   margin-bottom: 2px;
   border-radius: 2px;
-  background-color: $rse-navy;
   border-left: 2px solid $rse-gold;
   white-space: nowrap;
   overflow: hidden;
@@ -84,7 +83,7 @@
   &:hover,
   &:hover:visited {
     color: $rse-gold-light !important;
-    background-color: $rse-navy-dark;
+    filter: brightness(85%);
     text-decoration: none;
   }
 }

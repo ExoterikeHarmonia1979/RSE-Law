@@ -3,6 +3,7 @@ import { Link } from '@fluentui/react';
 import styles from './WeekView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { addDays, isSameDay, startOfWeek } from '../utils/dateUtils';
+import { getEventColor } from '../styles/brandColors';
 
 export interface IWeekViewProps {
   currentDate: Date;
@@ -40,8 +41,14 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
           <div key={day.toISOString()} className={styles.allDayCell}>
             {events
               .filter((e) => e.isAllDay && isSameDay(e.start, day))
-              .map((event) => (
-                <Link key={event.id} className={styles.eventChip} onClick={() => onEventClick(event)} title={event.subject}>
+              .map((event, index) => (
+                <Link
+                  key={event.id}
+                  className={styles.eventChip}
+                  style={{ backgroundColor: getEventColor(index) }}
+                  onClick={() => onEventClick(event)}
+                  title={event.subject}
+                >
                   {event.subject}
                 </Link>
               ))}
@@ -62,7 +69,8 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
             ))}
             {events
               .filter((e) => !e.isAllDay && isSameDay(e.start, day))
-              .map((event) => {
+              .sort((a, b) => a.start.getTime() - b.start.getTime())
+              .map((event, index) => {
                 const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
                 const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
                 return (
@@ -72,7 +80,8 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
                     className={styles.timedEvent}
                     style={{
                       top: (startMinutes / 60) * HOUR_HEIGHT,
-                      height: (durationMinutes / 60) * HOUR_HEIGHT
+                      height: (durationMinutes / 60) * HOUR_HEIGHT,
+                      backgroundColor: getEventColor(index)
                     }}
                     onClick={() => onEventClick(event)}
                     title={event.subject}
