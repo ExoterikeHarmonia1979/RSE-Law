@@ -1,3 +1,5 @@
+@import '../styles/brandColors';
+
 .exchangeCalendar {
   overflow: hidden;
   padding: 1em;
@@ -5,11 +7,18 @@
 }
 
 .toolbar {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background-color: $rse-navy;
+  border-bottom: 3px solid $rse-gold;
 }
 
 .rangeLabel {
   margin-left: 8px;
+  color: #fff;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .messageBar {

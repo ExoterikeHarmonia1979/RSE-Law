@@ -7,6 +7,7 @@ import { CalendarView } from '../models/CalendarView';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { getCalendarEvents } from '../services/GraphCalendarService';
 import { getRangeForView, getRangeLabel, navigate } from '../utils/dateUtils';
+import { rseGold, rseGoldDark, rseGoldLight, rseNavy } from '../styles/brandColors';
 import MonthView from './MonthView';
 import WeekView from './WeekView';
 import DayView from './DayView';
@@ -67,12 +68,58 @@ const ExchangeCalendar: React.FunctionComponent<IExchangeCalendarProps> = (props
     <div className={styles.exchangeCalendar}>
       <Stack horizontal horizontalAlign="space-between" verticalAlign="center" wrap className={styles.toolbar}>
         <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }}>
-          <DefaultButton text="Today" onClick={handleToday} />
-          <IconButton iconProps={{ iconName: 'ChevronLeft' }} ariaLabel="Previous" onClick={handlePrev} />
-          <IconButton iconProps={{ iconName: 'ChevronRight' }} ariaLabel="Next" onClick={handleNext} />
+          <DefaultButton
+            text="Today"
+            onClick={handleToday}
+            styles={{
+              root: { backgroundColor: rseGold, border: 'none' },
+              rootHovered: { backgroundColor: rseGoldLight },
+              rootPressed: { backgroundColor: rseGoldDark },
+              label: { color: rseNavy, fontWeight: 600 }
+            }}
+          />
+          <IconButton
+            iconProps={{ iconName: 'ChevronLeft' }}
+            ariaLabel="Previous"
+            onClick={handlePrev}
+            styles={{
+              root: { color: '#fff' },
+              rootHovered: { color: rseGold, backgroundColor: 'rgba(255, 255, 255, 0.12)' }
+            }}
+          />
+          <IconButton
+            iconProps={{ iconName: 'ChevronRight' }}
+            ariaLabel="Next"
+            onClick={handleNext}
+            styles={{
+              root: { color: '#fff' },
+              rootHovered: { color: rseGold, backgroundColor: 'rgba(255, 255, 255, 0.12)' }
+            }}
+          />
           <Text variant="xLarge" className={styles.rangeLabel}>{getRangeLabel(view, currentDate)}</Text>
         </Stack>
-        <Pivot selectedKey={view} onLinkClick={handleViewChange}>
+        <Pivot
+          selectedKey={view}
+          onLinkClick={handleViewChange}
+          styles={{
+            link: {
+              color: '#fff',
+              backgroundColor: 'transparent',
+              selectors: {
+                ':hover': { color: rseGold, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
+                ':active': { color: rseGold }
+              }
+            },
+            linkIsSelected: {
+              color: rseGold,
+              backgroundColor: 'transparent',
+              selectors: {
+                ':before': { backgroundColor: rseGold },
+                ':hover': { color: rseGold, backgroundColor: 'rgba(255, 255, 255, 0.08)' }
+              }
+            }
+          }}
+        >
           <PivotItem headerText="Day" itemKey={CalendarView.Day} />
           <PivotItem headerText="Week" itemKey={CalendarView.Week} />
           <PivotItem headerText="Month" itemKey={CalendarView.Month} />

@@ -1,3 +1,5 @@
+@import '../styles/brandColors';
+
 $timeGutterWidth: 56px;
 
 .weekView {
@@ -6,7 +8,12 @@ $timeGutterWidth: 56px;
   max-height: 700px;
 }
 
-.headerRow,
+.headerRow {
+  display: grid;
+  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  background-color: $rse-navy;
+}
+
 .allDayRow {
   display: grid;
   grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
@@ -21,17 +28,20 @@ $timeGutterWidth: 56px;
 
 .dayHeader {
   text-align: center;
-  padding: 6px 0;
-  border-left: 1px solid var(--neutralLight);
+  padding: 8px 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .dayHeaderWeekday {
-  font-size: 12px;
-  color: var(--neutralSecondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: $rse-cream;
 }
 
 .dayHeaderNumber {
   font-size: 16px;
+  color: #fff;
 }
 
 .todayNumber {
@@ -41,8 +51,9 @@ $timeGutterWidth: 56px;
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background-color: var(--themePrimary);
-  color: #fff;
+  background-color: $rse-gold;
+  color: $rse-navy-dark;
+  font-weight: 700;
   font-size: 14px;
 }
 
@@ -55,10 +66,12 @@ $timeGutterWidth: 56px;
 .eventChip {
   display: block;
   font-size: 12px;
-  padding: 1px 4px;
+  padding: 1px 5px;
   margin-bottom: 2px;
   border-radius: 2px;
-  background-color: var(--themeLighter);
+  background-color: $rse-navy;
+  color: #fff !important;
+  border-left: 2px solid $rse-gold;
 }
 
 .timeGrid {
@@ -96,8 +109,14 @@ $timeGutterWidth: 56px;
   text-align: left;
   padding: 2px 4px;
   border-radius: 2px;
-  background-color: var(--themeLighter);
+  background-color: $rse-navy;
+  color: #fff;
   border: none;
+  border-left: 3px solid $rse-gold;
   overflow: hidden;
   cursor: pointer;
+
+  &:hover {
+    background-color: $rse-navy-dark;
+  }
 }
