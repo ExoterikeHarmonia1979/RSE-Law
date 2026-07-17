@@ -1,0 +1,103 @@
+$timeGutterWidth: 56px;
+
+.weekView {
+  border: 1px solid var(--neutralLight);
+  overflow: auto;
+  max-height: 700px;
+}
+
+.headerRow,
+.allDayRow {
+  display: grid;
+  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  border-bottom: 1px solid var(--neutralLight);
+}
+
+.timeGutter {
+  padding: 4px;
+  font-size: 11px;
+  color: var(--neutralSecondary);
+}
+
+.dayHeader {
+  text-align: center;
+  padding: 6px 0;
+  border-left: 1px solid var(--neutralLight);
+}
+
+.dayHeaderWeekday {
+  font-size: 12px;
+  color: var(--neutralSecondary);
+}
+
+.dayHeaderNumber {
+  font-size: 16px;
+}
+
+.todayNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--themePrimary);
+  color: #fff;
+  font-size: 14px;
+}
+
+.allDayCell {
+  border-left: 1px solid var(--neutralLight);
+  padding: 2px;
+  min-height: 20px;
+}
+
+.eventChip {
+  display: block;
+  font-size: 12px;
+  padding: 1px 4px;
+  margin-bottom: 2px;
+  border-radius: 2px;
+  background-color: var(--themeLighter);
+}
+
+.timeGrid {
+  display: grid;
+  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+}
+
+.timeGutterColumn {
+  position: relative;
+}
+
+.hourLabel {
+  border-top: 1px solid var(--neutralLight);
+  font-size: 11px;
+  color: var(--neutralSecondary);
+  padding: 2px 4px;
+  box-sizing: border-box;
+}
+
+.dayColumn {
+  position: relative;
+  border-left: 1px solid var(--neutralLight);
+}
+
+.hourCell {
+  border-top: 1px solid var(--neutralLight);
+  box-sizing: border-box;
+}
+
+.timedEvent {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  font-size: 11px;
+  text-align: left;
+  padding: 2px 4px;
+  border-radius: 2px;
+  background-color: var(--themeLighter);
+  border: none;
+  overflow: hidden;
+  cursor: pointer;
+}

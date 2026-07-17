@@ -1,0 +1,18 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/config.2.0.schema.json",
+  "version": "2.0",
+  "bundles": {
+    "exchange-calendar-web-part": {
+      "components": [
+        {
+          "entrypoint": "./lib/webparts/exchangeCalendar/ExchangeCalendarWebPart.js",
+          "manifest": "./src/webparts/exchangeCalendar/ExchangeCalendarWebPart.manifest.json"
+        }
+      ]
+    }
+  },
+  "externals": {},
+  "localizedResources": {
+    "ExchangeCalendarWebPartStrings": "lib/webparts/exchangeCalendar/loc/{locale}.js"
+  }
+}

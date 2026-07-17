@@ -1,0 +1,23 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "whichFolder": "subdir",
+    "solutionName": "exchange-calendar-web-part",
+    "environment": "spo",
+    "packageManager": "npm",
+    "skipFeatureDeployment": true,
+    "useGulp": false,
+    "componentType": "webpart",
+    "template": "react",
+    "componentName": "ExchangeCalendar",
+    "componentDescription": "Displays the Calendar@RSE-Law.com Exchange calendar with Day, Week, and Month views",
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "22.23.1",
+    "sdksVersions": {},
+    "version": "1.23.2",
+    "libraryName": "exchange-calendar-web-part",
+    "libraryId": "6f19cd77-a0e3-4e14-b82d-192a7943c36f",
+    "solutionShortDescription": "exchange-calendar-web-part description",
+    "isDomainIsolated": false
+  }
+}

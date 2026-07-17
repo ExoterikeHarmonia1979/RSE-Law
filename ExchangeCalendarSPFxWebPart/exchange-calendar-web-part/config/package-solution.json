@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "exchange-calendar-web-part-client-side-solution",
+    "id": "6f19cd77-a0e3-4e14-b82d-192a7943c36f",
+    "version": "1.0.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "developer": {
+      "name": "",
+      "websiteUrl": "",
+      "privacyUrl": "",
+      "termsOfUseUrl": "",
+      "mpnId": "Undefined-1.23.2"
+    },
+    "metadata": {
+      "shortDescription": {
+        "default": "exchange-calendar-web-part description"
+      },
+      "longDescription": {
+        "default": "exchange-calendar-web-part description"
+      },
+      "screenshotPaths": [],
+      "videoUrl": "",
+      "categories": []
+    },
+    "features": [
+      {
+        "title": "exchange-calendar-web-part Feature",
+        "description": "The feature that activates elements of the exchange-calendar-web-part solution.",
+        "id": "2f76c410-a29c-44f2-b5b6-8401404cba1b",
+        "version": "1.0.0.0"
+      }
+    ],
+    "webApiPermissionRequests": [
+      {
+        "resource": "Microsoft Graph",
+        "scope": "Calendars.Read.Shared"
+      }
+    ]
+  },
+  "paths": {
+    "zippedPackage": "solution/exchange-calendar-web-part.sppkg"
+  }
+}

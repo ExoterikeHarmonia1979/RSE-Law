@@ -1,0 +1,75 @@
+$timeGutterWidth: 64px;
+
+.dayView {
+  border: 1px solid var(--neutralLight);
+  overflow: auto;
+  max-height: 700px;
+}
+
+.allDayRow {
+  padding: 4px;
+  border-bottom: 1px solid var(--neutralLight);
+}
+
+.eventChip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  padding: 2px 6px;
+  margin-bottom: 2px;
+  border-radius: 2px;
+  background-color: var(--themeLighter);
+  border: none;
+  cursor: pointer;
+}
+
+.timeGrid {
+  display: grid;
+  grid-template-columns: #{$timeGutterWidth} 1fr;
+}
+
+.timeGutterColumn {
+  position: relative;
+}
+
+.hourLabel {
+  border-top: 1px solid var(--neutralLight);
+  font-size: 11px;
+  color: var(--neutralSecondary);
+  padding: 2px 6px;
+  box-sizing: border-box;
+}
+
+.dayColumn {
+  position: relative;
+  border-left: 1px solid var(--neutralLight);
+}
+
+.hourCell {
+  border-top: 1px solid var(--neutralLight);
+  box-sizing: border-box;
+}
+
+.timedEvent {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 3px;
+  background-color: var(--themeLighter);
+  border: none;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.eventSubject {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.eventTime {
+  font-size: 11px;
+  color: var(--neutralSecondary);
+}
