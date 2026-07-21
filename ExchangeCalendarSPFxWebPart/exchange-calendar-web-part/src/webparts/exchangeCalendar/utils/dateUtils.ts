@@ -29,9 +29,12 @@ export function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+/** Weeks start on Monday, matching business-week convention. */
 export function startOfWeek(date: Date): Date {
   const result = startOfDay(date);
-  result.setDate(result.getDate() - result.getDay());
+  const day = result.getDay();
+  const diffFromMonday = day === 0 ? 6 : day - 1;
+  result.setDate(result.getDate() - diffFromMonday);
   return result;
 }
 
@@ -43,7 +46,7 @@ export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-/** 6-week grid (42 days) starting on the Sunday on/before the 1st of the month, so the month view always shows full weeks. */
+/** 6-week grid (42 days) starting on the Monday on/before the 1st of the month, so the month view always shows full weeks. */
 export function getMonthGridDays(date: Date): Date[] {
   const gridStart = startOfWeek(startOfMonth(date));
   return Array.from({ length: 42 }, (_unused, i) => addDays(gridStart, i));

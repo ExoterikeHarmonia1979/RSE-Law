@@ -11,7 +11,7 @@ export interface IMonthViewProps {
   onEventClick: (event: ICalendarEvent) => void;
 }
 
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_VISIBLE_EVENTS = 3;
 
 const MonthView: React.FunctionComponent<IMonthViewProps> = ({ currentDate, events, onEventClick }) => {
