@@ -1,4 +1,5 @@
 import { CalendarView } from '../models/CalendarView';
+import type { ICalendarEvent } from '../models/ICalendarEvent';
 
 export function startOfDay(date: Date): Date {
   const result = new Date(date);
@@ -72,6 +73,20 @@ export function navigate(view: CalendarView, date: Date, delta: number): Date {
     default:
       return addMonths(date, delta);
   }
+}
+
+/** Clips an event to [windowStart, windowEnd); returns undefined if it doesn't overlap the window at all. */
+export function clampEventToWindow(
+  event: ICalendarEvent,
+  windowStart: Date,
+  windowEnd: Date
+): ICalendarEvent | undefined {
+  if (event.end.getTime() <= windowStart.getTime() || event.start.getTime() >= windowEnd.getTime()) {
+    return undefined;
+  }
+  const start = event.start.getTime() < windowStart.getTime() ? windowStart : event.start;
+  const end = event.end.getTime() > windowEnd.getTime() ? windowEnd : event.end;
+  return { ...event, start, end };
 }
 
 export function getRangeLabel(view: CalendarView, date: Date): string {

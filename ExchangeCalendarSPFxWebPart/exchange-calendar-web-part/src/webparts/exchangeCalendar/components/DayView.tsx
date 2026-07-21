@@ -1,7 +1,7 @@
 import * as React from 'react';
 import styles from './DayView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
-import { isSameDay } from '../utils/dateUtils';
+import { clampEventToWindow, isSameDay } from '../utils/dateUtils';
 import { layoutTimedEvents } from '../utils/eventLayout';
 import { getEventColor } from '../styles/brandColors';
 
@@ -11,7 +11,9 @@ export interface IDayViewProps {
   onEventClick: (event: ICalendarEvent) => void;
 }
 
-const HOURS = Array.from({ length: 24 }, (_unused, i) => i);
+const START_HOUR = 8;
+const END_HOUR = 17;
+const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_unused, i) => START_HOUR + i);
 const HOUR_HEIGHT = 56;
 const MIN_EVENT_HEIGHT = 20;
 const MIN_HEIGHT_FOR_TIME_LINE = 36;
@@ -30,7 +32,12 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
     .filter((e) => isSameDay(e.start, currentDate))
     .sort((a, b) => a.start.getTime() - b.start.getTime());
   const allDayEvents = dayEvents.filter((e) => e.isAllDay);
-  const timedEvents = dayEvents.filter((e) => !e.isAllDay);
+  const windowStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), START_HOUR, 0, 0, 0);
+  const windowEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), END_HOUR, 0, 0, 0);
+  const timedEvents = dayEvents
+    .filter((e) => !e.isAllDay)
+    .map((e) => clampEventToWindow(e, windowStart, windowEnd))
+    .filter((e): e is ICalendarEvent => !!e);
 
   return (
     <div className={styles.dayView}>
@@ -56,13 +63,13 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
             <div key={hour} className={styles.hourLabel} style={{ height: HOUR_HEIGHT }}>{formatHour(hour)}</div>
           ))}
         </div>
-        <div className={styles.dayColumn} style={{ height: HOUR_HEIGHT * 24 }}>
+        <div className={styles.dayColumn} style={{ height: HOUR_HEIGHT * HOURS.length }}>
           {HOURS.map((hour) => (
             <div key={hour} className={styles.hourCell} style={{ height: HOUR_HEIGHT }} />
           ))}
           {layoutTimedEvents(timedEvents).map(({ event, column, columnCount }, index) => {
-            const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
-            const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
+            const startMinutes = (event.start.getHours() - START_HOUR) * 60 + event.start.getMinutes();
+            const durationMinutes = (event.end.getTime() - event.start.getTime()) / 60000;
             const widthPercent = 100 / columnCount;
             const heightPx = Math.max((durationMinutes / 60) * HOUR_HEIGHT, MIN_EVENT_HEIGHT);
             const canShowTimeLine = heightPx >= MIN_HEIGHT_FOR_TIME_LINE;

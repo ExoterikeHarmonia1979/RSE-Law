@@ -8,6 +8,12 @@ $timeGutterWidth: 56px;
   max-height: 700px;
 }
 
+.stickyHeader {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
 .headerRow {
   display: grid;
   grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
@@ -17,6 +23,7 @@ $timeGutterWidth: 56px;
 .allDayRow {
   display: grid;
   grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  background-color: #fff;
   border-bottom: 1px solid var(--neutralLight);
 }
 

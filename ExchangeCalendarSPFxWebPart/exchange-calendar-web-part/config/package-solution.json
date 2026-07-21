@@ -3,7 +3,7 @@
   "solution": {
     "name": "exchange-calendar-web-part-client-side-solution",
     "id": "6f19cd77-a0e3-4e14-b82d-192a7943c36f",
-    "version": "1.0.2.0",
+    "version": "1.0.3.0",
     "includeClientSideAssets": true,
     "skipFeatureDeployment": true,
     "isDomainIsolated": false,
