@@ -50,6 +50,7 @@ $timeGutterWidth: 64px;
 
 .dayColumn {
   position: relative;
+  min-width: 0;
   border-left: 1px solid var(--neutralLight);
 }
 

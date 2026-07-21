@@ -34,6 +34,7 @@ $timeGutterWidth: 56px;
 }
 
 .dayHeader {
+  min-width: 0;
   text-align: center;
   padding: 8px 0;
   border-left: 1px solid rgba(255, 255, 255, 0.15);
@@ -65,6 +66,7 @@ $timeGutterWidth: 56px;
 }
 
 .allDayCell {
+  min-width: 0;
   border-left: 1px solid var(--neutralLight);
   padding: 2px;
   min-height: 20px;
@@ -112,6 +114,7 @@ $timeGutterWidth: 56px;
 
 .dayColumn {
   position: relative;
+  min-width: 0;
   border-left: 1px solid var(--neutralLight);
 }
 

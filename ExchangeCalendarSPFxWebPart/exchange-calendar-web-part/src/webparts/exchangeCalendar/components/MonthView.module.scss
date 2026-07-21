@@ -33,6 +33,7 @@
 }
 
 .dayCell {
+  min-width: 0;
   border-top: 1px solid var(--neutralLight);
   border-left: 1px solid var(--neutralLight);
   padding: 4px;
