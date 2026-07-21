@@ -2,6 +2,7 @@ import * as React from 'react';
 import styles from './DayView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { isSameDay } from '../utils/dateUtils';
+import { layoutTimedEvents } from '../utils/eventLayout';
 import { getEventColor } from '../styles/brandColors';
 
 export interface IDayViewProps {
@@ -57,9 +58,10 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
           {HOURS.map((hour) => (
             <div key={hour} className={styles.hourCell} style={{ height: HOUR_HEIGHT }} />
           ))}
-          {timedEvents.map((event, index) => {
+          {layoutTimedEvents(timedEvents).map(({ event, column, columnCount }, index) => {
             const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
             const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
+            const widthPercent = 100 / columnCount;
             return (
               <button
                 key={event.id}
@@ -68,6 +70,8 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
                 style={{
                   top: (startMinutes / 60) * HOUR_HEIGHT,
                   height: (durationMinutes / 60) * HOUR_HEIGHT,
+                  left: `${column * widthPercent}%`,
+                  width: `calc(${widthPercent}% - 4px)`,
                   backgroundColor: getEventColor(index)
                 }}
                 onClick={() => onEventClick(event)}

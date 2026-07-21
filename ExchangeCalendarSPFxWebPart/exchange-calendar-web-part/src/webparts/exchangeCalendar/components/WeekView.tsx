@@ -3,6 +3,7 @@ import { Link } from '@fluentui/react';
 import styles from './WeekView.module.scss';
 import type { ICalendarEvent } from '../models/ICalendarEvent';
 import { addDays, isSameDay, startOfWeek } from '../utils/dateUtils';
+import { layoutTimedEvents } from '../utils/eventLayout';
 import { getEventColor } from '../styles/brandColors';
 
 export interface IWeekViewProps {
@@ -67,12 +68,11 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
             {HOURS.map((hour) => (
               <div key={hour} className={styles.hourCell} style={{ height: HOUR_HEIGHT }} />
             ))}
-            {events
-              .filter((e) => !e.isAllDay && isSameDay(e.start, day))
-              .sort((a, b) => a.start.getTime() - b.start.getTime())
-              .map((event, index) => {
+            {layoutTimedEvents(events.filter((e) => !e.isAllDay && isSameDay(e.start, day))).map(
+              ({ event, column, columnCount }, index) => {
                 const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
                 const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
+                const widthPercent = 100 / columnCount;
                 return (
                   <button
                     key={event.id}
@@ -81,6 +81,8 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
                     style={{
                       top: (startMinutes / 60) * HOUR_HEIGHT,
                       height: (durationMinutes / 60) * HOUR_HEIGHT,
+                      left: `${column * widthPercent}%`,
+                      width: `calc(${widthPercent}% - 2px)`,
                       backgroundColor: getEventColor(index)
                     }}
                     onClick={() => onEventClick(event)}
@@ -89,7 +91,8 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
                     {event.subject}
                   </button>
                 );
-              })}
+              }
+            )}
           </div>
         ))}
       </div>
