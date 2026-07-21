@@ -14,6 +14,7 @@ export interface IWeekViewProps {
 
 const HOURS = Array.from({ length: 24 }, (_unused, i) => i);
 const HOUR_HEIGHT = 48;
+const MAX_VISIBLE_ALL_DAY = 3;
 
 function formatHour(hour: number): string {
   return new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' });
@@ -38,11 +39,13 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
 
       <div className={styles.allDayRow}>
         <div className={styles.timeGutter}>All day</div>
-        {weekDays.map((day) => (
-          <div key={day.toISOString()} className={styles.allDayCell}>
-            {events
-              .filter((e) => e.isAllDay && isSameDay(e.start, day))
-              .map((event, index) => (
+        {weekDays.map((day) => {
+          const dayAllDayEvents = events.filter((e) => e.isAllDay && isSameDay(e.start, day));
+          const visibleEvents = dayAllDayEvents.slice(0, MAX_VISIBLE_ALL_DAY);
+          const overflowCount = dayAllDayEvents.length - visibleEvents.length;
+          return (
+            <div key={day.toISOString()} className={styles.allDayCell}>
+              {visibleEvents.map((event, index) => (
                 <Link
                   key={event.id}
                   className={styles.eventChip}
@@ -53,8 +56,10 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
                   {event.subject}
                 </Link>
               ))}
-          </div>
-        ))}
+              {overflowCount > 0 && <div className={styles.overflow}>+{overflowCount} more</div>}
+            </div>
+          );
+        })}
       </div>
 
       <div className={styles.timeGrid}>

@@ -24,7 +24,7 @@ function parseUtcDateTime(dateTime: string): Date {
 function mapEvent(event: IGraphEvent): ICalendarEvent {
   return {
     id: event.id,
-    subject: event.subject || '(No subject)',
+    subject: event.subject?.trim() || '(No subject)',
     start: parseUtcDateTime(event.start.dateTime),
     end: parseUtcDateTime(event.end.dateTime),
     isAllDay: event.isAllDay,
@@ -58,5 +58,7 @@ export async function getCalendarEvents(
     events.push(...response.value.map(mapEvent));
   }
 
-  return events;
+  // Graph can return the same occurrence twice at pagination/recurrence boundaries; de-dupe by id
+  // so the calendar UI never lays out two identical events as if they were distinct overlapping ones.
+  return Array.from(new Map(events.map((event) => [event.id, event])).values());
 }
