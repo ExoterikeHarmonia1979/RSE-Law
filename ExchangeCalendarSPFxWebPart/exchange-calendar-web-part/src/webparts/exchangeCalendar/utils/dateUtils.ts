@@ -42,6 +42,11 @@ export function endOfWeek(date: Date): Date {
   return endOfDay(addDays(startOfWeek(date), 6));
 }
 
+/** End of the displayed business week (Friday) - Week view only shows Mon-Fri. */
+export function endOfWorkWeek(date: Date): Date {
+  return endOfDay(addDays(startOfWeek(date), 4));
+}
+
 export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
@@ -57,7 +62,7 @@ export function getRangeForView(view: CalendarView, date: Date): { start: Date; 
     case CalendarView.Day:
       return { start: startOfDay(date), end: endOfDay(date) };
     case CalendarView.Week:
-      return { start: startOfWeek(date), end: endOfWeek(date) };
+      return { start: startOfWeek(date), end: endOfWorkWeek(date) };
     case CalendarView.Month:
     default: {
       const gridDays = getMonthGridDays(date);
@@ -98,7 +103,7 @@ export function getRangeLabel(view: CalendarView, date: Date): string {
       return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     case CalendarView.Week: {
       const start = startOfWeek(date);
-      const end = addDays(start, 6);
+      const end = addDays(start, 4);
       const sameMonth = start.getMonth() === end.getMonth();
       const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       const endLabel = end.toLocaleDateString(undefined, {

@@ -9,7 +9,7 @@
 
 .weekdayRow {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background-color: $rse-navy;
   position: sticky;
   top: 0;
@@ -28,7 +28,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   grid-auto-rows: minmax(90px, 1fr);
 }
 
@@ -39,7 +39,7 @@
   padding: 4px;
   overflow: hidden;
 
-  &:nth-child(7n) {
+  &:nth-child(5n) {
     border-right: 1px solid var(--neutralLight);
   }
 }

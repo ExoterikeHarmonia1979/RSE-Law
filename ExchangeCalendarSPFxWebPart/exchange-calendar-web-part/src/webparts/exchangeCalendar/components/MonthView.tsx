@@ -11,11 +11,11 @@ export interface IMonthViewProps {
   onEventClick: (event: ICalendarEvent) => void;
 }
 
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const MAX_VISIBLE_EVENTS = 3;
 
 const MonthView: React.FunctionComponent<IMonthViewProps> = ({ currentDate, events, onEventClick }) => {
-  const days = getMonthGridDays(currentDate);
+  const days = getMonthGridDays(currentDate).filter((day) => day.getDay() !== 0 && day.getDay() !== 6);
   const today = new Date();
 
   return (

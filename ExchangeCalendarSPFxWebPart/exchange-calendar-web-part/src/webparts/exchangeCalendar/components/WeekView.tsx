@@ -32,7 +32,7 @@ function getDayWindow(day: Date): { windowStart: Date; windowEnd: Date } {
 
 const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events, onEventClick }) => {
   const weekStart = startOfWeek(currentDate);
-  const weekDays = Array.from({ length: 7 }, (_unused, i) => addDays(weekStart, i));
+  const weekDays = Array.from({ length: 5 }, (_unused, i) => addDays(weekStart, i));
   const today = new Date();
 
   return (

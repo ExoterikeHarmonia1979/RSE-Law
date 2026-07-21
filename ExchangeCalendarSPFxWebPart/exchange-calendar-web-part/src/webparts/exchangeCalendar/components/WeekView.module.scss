@@ -1,6 +1,7 @@
 @import '../styles/brandColors';
 
 $timeGutterWidth: 56px;
+$dayColumns: 5;
 
 .weekView {
   border: 1px solid var(--neutralLight);
@@ -16,13 +17,13 @@ $timeGutterWidth: 56px;
 
 .headerRow {
   display: grid;
-  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  grid-template-columns: #{$timeGutterWidth} repeat(#{$dayColumns}, 1fr);
   background-color: $rse-navy;
 }
 
 .allDayRow {
   display: grid;
-  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  grid-template-columns: #{$timeGutterWidth} repeat(#{$dayColumns}, 1fr);
   background-color: #fff;
   border-bottom: 1px solid var(--neutralLight);
 }
@@ -97,7 +98,7 @@ $timeGutterWidth: 56px;
 
 .timeGrid {
   display: grid;
-  grid-template-columns: #{$timeGutterWidth} repeat(7, 1fr);
+  grid-template-columns: #{$timeGutterWidth} repeat(#{$dayColumns}, 1fr);
 }
 
 .timeGutterColumn {
