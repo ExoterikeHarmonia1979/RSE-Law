@@ -13,6 +13,8 @@ export interface IDayViewProps {
 
 const HOURS = Array.from({ length: 24 }, (_unused, i) => i);
 const HOUR_HEIGHT = 56;
+const MIN_EVENT_HEIGHT = 20;
+const MIN_HEIGHT_FOR_TIME_LINE = 36;
 
 function formatHour(hour: number): string {
   return new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' });
@@ -62,6 +64,8 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
             const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
             const durationMinutes = Math.max((event.end.getTime() - event.start.getTime()) / 60000, 15);
             const widthPercent = 100 / columnCount;
+            const heightPx = Math.max((durationMinutes / 60) * HOUR_HEIGHT, MIN_EVENT_HEIGHT);
+            const canShowTimeLine = heightPx >= MIN_HEIGHT_FOR_TIME_LINE;
             return (
               <button
                 key={event.id}
@@ -69,7 +73,7 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
                 className={styles.timedEvent}
                 style={{
                   top: (startMinutes / 60) * HOUR_HEIGHT,
-                  height: (durationMinutes / 60) * HOUR_HEIGHT,
+                  height: heightPx,
                   left: `${column * widthPercent}%`,
                   width: `calc(${widthPercent}% - 4px)`,
                   backgroundColor: getEventColor(index)
@@ -78,7 +82,7 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
                 title={`${event.subject} (${formatTimeRange(event)})`}
               >
                 <div className={styles.eventSubject}>{event.subject}</div>
-                <div className={styles.eventTime}>{formatTimeRange(event)}</div>
+                {canShowTimeLine && <div className={styles.eventTime}>{formatTimeRange(event)}</div>}
               </button>
             );
           })}

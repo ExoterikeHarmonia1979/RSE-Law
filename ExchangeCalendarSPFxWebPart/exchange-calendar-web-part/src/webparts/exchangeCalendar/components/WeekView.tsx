@@ -14,6 +14,7 @@ export interface IWeekViewProps {
 
 const HOURS = Array.from({ length: 24 }, (_unused, i) => i);
 const HOUR_HEIGHT = 48;
+const MIN_EVENT_HEIGHT = 16;
 const MAX_VISIBLE_ALL_DAY = 3;
 
 function formatHour(hour: number): string {
@@ -85,7 +86,7 @@ const WeekView: React.FunctionComponent<IWeekViewProps> = ({ currentDate, events
                     className={styles.timedEvent}
                     style={{
                       top: (startMinutes / 60) * HOUR_HEIGHT,
-                      height: (durationMinutes / 60) * HOUR_HEIGHT,
+                      height: Math.max((durationMinutes / 60) * HOUR_HEIGHT, MIN_EVENT_HEIGHT),
                       left: `${column * widthPercent}%`,
                       width: `calc(${widthPercent}% - 2px)`,
                       backgroundColor: getEventColor(index)
