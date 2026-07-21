@@ -71,6 +71,7 @@ const DayView: React.FunctionComponent<IDayViewProps> = ({ currentDate, events, 
                   backgroundColor: getEventColor(index)
                 }}
                 onClick={() => onEventClick(event)}
+                title={`${event.subject} (${formatTimeRange(event)})`}
               >
                 <div className={styles.eventSubject}>{event.subject}</div>
                 <div className={styles.eventTime}>{formatTimeRange(event)}</div>
