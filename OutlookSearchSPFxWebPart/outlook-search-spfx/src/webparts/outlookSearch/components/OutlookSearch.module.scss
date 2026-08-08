@@ -251,27 +251,33 @@ $text-secondary: #616161;
   white-space: nowrap;
 }
 
-.itemTime {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: $outlook-blue;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .attachIcon {
-  font-size: 12px;
+  flex: 0 0 auto;
+  font-size: 13px;
   color: $text-secondary;
 }
 
+.itemSubjectRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 1px;
+}
+
 .itemSubject {
+  flex: 1 1 auto;
   font-size: 13px;
   color: $outlook-blue;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 1px;
+}
+
+.itemTime {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: $outlook-blue;
 }
 
 .itemSnippet {
@@ -286,6 +292,45 @@ $text-secondary: #616161;
     background: #fff3b0;
     padding: 0 1px;
   }
+}
+
+.itemAttachRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  overflow: hidden;
+}
+
+.itemAttachChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 130px;
+  border: 1px solid $border;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  background: #ffffff;
+  color: $text-primary;
+}
+
+.itemAttachChipIcon {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: $outlook-blue-dark;
+}
+
+.itemAttachChipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemAttachMore {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: $text-secondary;
 }
 
 .loadMoreRow {

@@ -23,6 +23,7 @@ const HL_PRE = '\uE000';
 const HL_POST = '\uE001';
 
 const SELECT_FIELDS = [
+  'content',
   'metadata_storage_path',
   'metadata_storage_name',
   'metadata_storage_last_modified',
@@ -59,14 +60,27 @@ function str(doc: any, field: string): string {
 function toEmailItem(doc: any): IEmailItem {
   const highlights = doc['@search.highlights'] || {};
   const attachments = Array.isArray(doc.attachment_names) ? doc.attachment_names : [];
+  // Collapse whitespace and keep only the start of the body for the preview
+  // line; the full text is re-fetched on selection for the reading pane.
+  const bodyPreview = str(doc, 'content').replace(/\s+/g, ' ').trim().slice(0, 200);
+
+  // Meeting invites (and some malformed mails) carry the EVENT date as the
+  // .eml creation date, which can be in the future. Trust the creation date
+  // only if it's plausible; otherwise use the blob's last-modified time.
+  const created = str(doc, 'metadata_creation_date');
+  const modified = str(doc, 'metadata_storage_last_modified');
+  const createdMs = Date.parse(created);
+  const plausible = !isNaN(createdMs) && createdMs <= Date.now() + 60 * 60 * 1000;
+
   return {
+    bodyPreview,
     storagePath: str(doc, 'metadata_storage_path'),
     fileName: str(doc, 'metadata_storage_name'),
     from: str(doc, 'metadata_message_from'),
     to: str(doc, 'metadata_message_to'),
     cc: str(doc, 'metadata_message_cc'),
     subject: str(doc, 'metadata_subject') || str(doc, 'metadata_storage_name'),
-    date: str(doc, 'metadata_creation_date') || str(doc, 'metadata_storage_last_modified'),
+    date: plausible ? created : (modified || created),
     snippetHtml: toSnippetHtml(highlights.content),
     attachmentNames: attachments as string[]
   };
@@ -98,7 +112,9 @@ export class AzureSearchService {
       body.filter = parsed.filter;
     }
     if (options.orderByDate) {
-      body.orderby = 'metadata_creation_date desc';
+      // Sort on blob last-modified: creation date is unreliable for meeting
+      // invites (event date, possibly future) and would float them to the top.
+      body.orderby = 'metadata_storage_last_modified desc';
     }
 
     const json = await this._post(`/docs/search`, body);

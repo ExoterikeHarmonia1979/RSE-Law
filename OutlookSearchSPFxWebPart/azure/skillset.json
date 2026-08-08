@@ -1,0 +1,21 @@
+{
+  "name": "matters-eml-skillset",
+  "description": "Extracts attachment file names from .eml files via the EmlAttachmentNamesSkill Azure Function (RegExAzFunc app).",
+  "skills": [
+    {
+      "@odata.type": "#Microsoft.Skills.Custom.WebApiSkill",
+      "name": "eml-attachment-names",
+      "uri": "https://regexazfunc.azurewebsites.net/api/EmlAttachmentNamesSkill?code=__FUNCTION_KEY__",
+      "httpMethod": "POST",
+      "timeout": "PT90S",
+      "batchSize": 8,
+      "context": "/document",
+      "inputs": [
+        { "name": "file_data", "source": "/document/file_data" }
+      ],
+      "outputs": [
+        { "name": "attachmentNames", "targetName": "attachmentNames" }
+      ]
+    }
+  ]
+}

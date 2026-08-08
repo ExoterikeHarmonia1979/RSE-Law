@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Persona, PersonaSize, Icon, Spinner, SpinnerSize, DefaultButton } from '@fluentui/react';
+import { Persona, PersonaSize, Icon, Spinner, SpinnerSize, DefaultButton, TooltipHost } from '@fluentui/react';
 import { IEmailItem } from '../models/IEmailItem';
 import styles from './OutlookSearch.module.scss';
 
@@ -33,6 +33,23 @@ function formatTime(iso: string): string {
     ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     : d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: '2-digit' });
 }
+
+/** Fluent icon name for an attachment chip, based on file extension. */
+export function fileTypeIcon(name: string): string {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  switch (ext) {
+    case 'xls': case 'xlsx': case 'csv': return 'ExcelDocument';
+    case 'doc': case 'docx': return 'WordDocument';
+    case 'ppt': case 'pptx': return 'PowerPointDocument';
+    case 'pdf': return 'PDF';
+    case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'tif': case 'tiff': return 'Photo2';
+    case 'msg': case 'eml': return 'Mail';
+    case 'zip': case '7z': case 'rar': return 'ZipFolder';
+    default: return 'Page';
+  }
+}
+
+const MAX_LIST_CHIPS = 3;
 
 /** Outlook-style date buckets: Today, Yesterday, This Week, Last Week, ... */
 function dateGroup(iso: string): string {
@@ -110,17 +127,34 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
                 <div className={styles.itemBody}>
                   <div className={styles.itemTopRow}>
                     <span className={styles.itemSender}>{sender}</span>
-                    <span className={styles.itemTime}>
-                      {item.attachmentNames.length > 0 && (
-                        <Icon iconName="Attach" className={styles.attachIcon} />
-                      )}
-                      {formatTime(item.date)}
-                    </span>
+                    {item.attachmentNames.length > 0 && (
+                      <Icon iconName="Attach" className={styles.attachIcon} />
+                    )}
                   </div>
-                  <div className={styles.itemSubject}>{item.subject}</div>
+                  <div className={styles.itemSubjectRow}>
+                    <span className={styles.itemSubject}>{item.subject}</span>
+                    <span className={styles.itemTime}>{formatTime(item.date)}</span>
+                  </div>
                   {item.snippetHtml
                     ? <div className={styles.itemSnippet} dangerouslySetInnerHTML={{ __html: item.snippetHtml }} />
-                    : <div className={styles.itemSnippet}>{item.fileName}</div>}
+                    : <div className={styles.itemSnippet}>{item.bodyPreview || item.fileName}</div>}
+                  {item.attachmentNames.length > 0 && (
+                    <div className={styles.itemAttachRow}>
+                      {item.attachmentNames.slice(0, MAX_LIST_CHIPS).map((name) => (
+                        <TooltipHost content={name} key={name}>
+                          <span className={styles.itemAttachChip}>
+                            <Icon iconName={fileTypeIcon(name)} className={styles.itemAttachChipIcon} />
+                            <span className={styles.itemAttachChipName}>{name}</span>
+                          </span>
+                        </TooltipHost>
+                      ))}
+                      {item.attachmentNames.length > MAX_LIST_CHIPS && (
+                        <span className={styles.itemAttachMore}>
+                          +{item.attachmentNames.length - MAX_LIST_CHIPS}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </React.Fragment>

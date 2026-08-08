@@ -15,6 +15,8 @@ export interface IEmailItem {
   date: string;
   /** Hit-highlighted snippet, already HTML-escaped except for <mark> tags. */
   snippetHtml: string;
+  /** First ~200 chars of the extracted body, for the list preview line. */
+  bodyPreview: string;
   attachmentNames: string[];
 }
 
