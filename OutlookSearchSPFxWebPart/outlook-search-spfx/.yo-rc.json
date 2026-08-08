@@ -1,0 +1,23 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "whichFolder": "subdir",
+    "solutionName": "outlook-search-spfx",
+    "useGulp": false,
+    "componentType": "webpart",
+    "template": "react",
+    "componentName": "OutlookSearch",
+    "componentDescription": "Outlook-style search over EML archive in Azure AI Search",
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "24.18.1",
+    "sdksVersions": {},
+    "version": "1.23.2",
+    "libraryName": "outlook-search-spfx",
+    "libraryId": "88d5b16c-c3be-4622-b033-2f74450c0369",
+    "environment": "spo",
+    "packageManager": "npm",
+    "solutionShortDescription": "outlook-search-spfx description",
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "matters-eml-indexer",
+  "dataSourceName": "matters-blob-ds",
+  "targetIndexName": "matters-eml-index",
+  "schedule": {
+    "interval": "PT1H"
+  },
+  "parameters": {
+    "batchSize": null,
+    "maxFailedItems": 25,
+    "maxFailedItemsPerBatch": 10,
+    "configuration": {
+      "indexedFileNameExtensions": ".eml,.msg",
+      "dataToExtract": "contentAndMetadata",
+      "parsingMode": "default",
+      "failOnUnsupportedContentType": false,
+      "failOnUnprocessableDocument": false
+    }
+  },
+  "fieldMappings": [
+    {
+      "sourceFieldName": "metadata_storage_path",
+      "targetFieldName": "metadata_storage_path",
+      "mappingFunction": { "name": "base64Encode" }
+    }
+  ]
+}

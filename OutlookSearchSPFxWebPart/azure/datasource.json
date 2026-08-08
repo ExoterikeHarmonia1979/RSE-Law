@@ -1,0 +1,10 @@
+{
+  "name": "matters-blob-ds",
+  "type": "azureblob",
+  "credentials": {
+    "connectionString": "__STORAGE_CONNECTION_STRING__"
+  },
+  "container": {
+    "name": "matters"
+  }
+}
