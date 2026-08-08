@@ -271,22 +271,44 @@ $def.actions = @{
       queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
     }
   }
-  Abandon_the_message_in_a_queue = @{
-    type = 'ApiConnection'
-    runAfter = @{ Process_Message = @('Failed','TimedOut','Skipped') }
-    inputs = @{
-      host = $SB
-      method = 'post'
-      path = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/abandon"
-      queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
+  # Not every failure deserves a retry. A change notification whose message no
+  # longer exists (draft sent, mail moved or deleted) can never succeed, so
+  # abandoning it just burns 10 redeliveries and dead-letters a no-op event.
+  # Retry real errors; complete the unprocessable ones.
+  If_Message_No_Longer_Exists = @{
+    type = 'If'
+    runAfter = @{ Process_Message = @('Failed','TimedOut') }
+    expression = @{ and = @(@{ equals = @(
+      "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']", 404) }) }
+    actions = @{
+      Complete_Stale_Notification = @{
+        type = 'ApiConnection'
+        runAfter = @{}
+        inputs = @{
+          host = $SB
+          method = 'delete'
+          path = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/complete"
+          queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
+        }
+      }
     }
-  }
-  Terminate_Failed = @{
-    type = 'Terminate'
-    # NOT 'Skipped': Abandon is skipped on the success path, and terminating
-    # there would mark a perfectly good run as Failed
-    runAfter = @{ Abandon_the_message_in_a_queue = @('Succeeded','Failed','TimedOut') }
-    inputs = @{ runStatus = 'Failed'; runError = @{ code = 'ProcessingFailed'; message = 'Message processing failed; message abandoned for redelivery.' } }
+    else = @{ actions = @{
+      Abandon_the_message_in_a_queue = @{
+        type = 'ApiConnection'
+        runAfter = @{}
+        inputs = @{
+          host = $SB
+          method = 'post'
+          path = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/abandon"
+          queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
+        }
+      }
+      Terminate_Failed = @{
+        type = 'Terminate'
+        runAfter = @{ Abandon_the_message_in_a_queue = @('Succeeded','Failed','TimedOut') }
+        inputs = @{ runStatus = 'Failed'; runError = @{ code = 'ProcessingFailed'; message = 'Message processing failed; message abandoned for redelivery.' } }
+      }
+    } }
   }
 }
 
