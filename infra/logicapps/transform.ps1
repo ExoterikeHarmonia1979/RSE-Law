@@ -265,7 +265,9 @@ $def.actions = @{
   }
   Terminate_Failed = @{
     type = 'Terminate'
-    runAfter = @{ Abandon_the_message_in_a_queue = @('Succeeded','Failed','Skipped','TimedOut') }
+    # NOT 'Skipped': Abandon is skipped on the success path, and terminating
+    # there would mark a perfectly good run as Failed
+    runAfter = @{ Abandon_the_message_in_a_queue = @('Succeeded','Failed','TimedOut') }
     inputs = @{ runStatus = 'Failed'; runError = @{ code = 'ProcessingFailed'; message = 'Message processing failed; message abandoned for redelivery.' } }
   }
 }
