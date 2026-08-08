@@ -12,10 +12,15 @@ using System.Text.RegularExpressions;
 namespace Company.Function;
 
 /// <summary>
-/// Returns an Outlook-fidelity preview of an .eml stored in the matters blob
-/// container: sanitized HTML body (inline cid: images embedded as data URIs),
-/// plain-text fallback, recipients, and attachment names/sizes.
-/// Called by the Email Archive Search SPFx web part.
+/// Outlook-fidelity access to .eml files in the matters blob container,
+/// used by the Email Archive Search SPFx web part.
+///
+///   POST { storagePath }            -> preview JSON (sanitized HTML body with
+///                                      cid: images inlined, recipients,
+///                                      attachment names/sizes)
+///   GET  ?path=...&amp;att=name     -> streams the decoded attachment with its
+///                                      real MIME type (inline disposition, so
+///                                      the browser opens PDFs/images directly)
 /// </summary>
 public class EmlPreviewFunc
 {
@@ -42,7 +47,18 @@ public class EmlPreviewFunc
 
     [Function("EmlPreviewFunc")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequest req)
+    {
+        if (HttpMethods.IsGet(req.Method))
+        {
+            return await ServeAttachment(req);
+        }
+        return await ServePreview(req);
+    }
+
+    // ── POST: preview JSON ───────────────────────────────────────────────
+
+    private async Task<IActionResult> ServePreview(HttpRequest req)
     {
         string body = await new StreamReader(req.Body).ReadToEndAsync();
         PreviewRequest? request;
@@ -60,14 +76,95 @@ public class EmlPreviewFunc
             return new BadRequestObjectResult("Provide 'storagePath'.");
         }
 
+        var (message, error) = await LoadMessage(request.StoragePath);
+        if (error != null) { return error; }
+
+        string? html = message!.HtmlBody;
+        if (html != null)
+        {
+            html = InlineCidImages(html, message);
+            html = Sanitize(html);
+        }
+
+        var attachments = new List<AttachmentInfo>();
+        foreach (MimeEntity entity in message.Attachments)
+        {
+            string? name = entity.ContentDisposition?.FileName ?? entity.ContentType?.Name;
+            if (string.IsNullOrWhiteSpace(name)) { continue; }
+            long size = 0;
+            if (entity is MimePart part && part.Content != null)
+            {
+                using var counter = new MemoryStream();
+                part.Content.DecodeTo(counter);
+                size = counter.Length;
+            }
+            attachments.Add(new AttachmentInfo { Name = name, SizeBytes = size });
+        }
+
+        return new OkObjectResult(new
+        {
+            subject = message.Subject ?? "",
+            from = message.From.ToString(),
+            to = message.To.Select(a => a.ToString()).ToArray(),
+            cc = message.Cc.Select(a => a.ToString()).ToArray(),
+            date = message.Date.ToString("o"),
+            htmlBody = html,
+            textBody = message.TextBody ?? "",
+            attachments
+        });
+    }
+
+    // ── GET: stream one attachment by its real MIME type ─────────────────
+
+    private async Task<IActionResult> ServeAttachment(HttpRequest req)
+    {
+        string? storagePath = req.Query["path"];
+        string? attachmentName = req.Query["att"];
+        if (string.IsNullOrWhiteSpace(storagePath) || string.IsNullOrWhiteSpace(attachmentName))
+        {
+            return new BadRequestObjectResult("Provide 'path' and 'att' query parameters.");
+        }
+
+        var (message, error) = await LoadMessage(storagePath);
+        if (error != null) { return error; }
+
+        foreach (MimeEntity entity in message!.Attachments)
+        {
+            string? name = entity.ContentDisposition?.FileName ?? entity.ContentType?.Name;
+            if (!string.Equals(name, attachmentName, StringComparison.OrdinalIgnoreCase)) { continue; }
+            if (entity is not MimePart part || part.Content == null) { continue; }
+
+            using var ms = new MemoryStream();
+            part.Content.DecodeTo(ms);
+
+            string contentType = part.ContentType?.MimeType ?? "";
+            if (string.IsNullOrEmpty(contentType) || contentType == "application/octet-stream")
+            {
+                contentType = InferContentType(attachmentName);
+            }
+
+            // inline (not attachment) so the browser opens what it can render
+            // (PDF, images, text) in the tab and downloads the rest by name.
+            string safeName = Regex.Replace(attachmentName, @"[""\r\n\\]", "_");
+            req.HttpContext.Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+            return new FileContentResult(ms.ToArray(), contentType);
+        }
+
+        return new NotFoundObjectResult($"Attachment '{attachmentName}' was not found in the message.");
+    }
+
+    // ── Shared blob/MIME plumbing ────────────────────────────────────────
+
+    private async Task<(MimeMessage? Message, IActionResult? Error)> LoadMessage(string storagePath)
+    {
         string blobUrl;
         try
         {
-            blobUrl = DecodeStoragePath(request.StoragePath);
+            blobUrl = DecodeStoragePath(storagePath);
         }
         catch (FormatException)
         {
-            return new BadRequestObjectResult("storagePath is not a valid URL or base64 token.");
+            return (null, new BadRequestObjectResult("storagePath is not a valid URL or base64 token."));
         }
 
         string containerBase = Environment.GetEnvironmentVariable("MATTERS_CONTAINER_URL")
@@ -76,13 +173,13 @@ public class EmlPreviewFunc
         if (!blobUrl.StartsWith(containerBase, StringComparison.OrdinalIgnoreCase))
         {
             // Only serve blobs from the matters container, nothing else.
-            return new BadRequestObjectResult("storagePath is outside the matters container.");
+            return (null, new BadRequestObjectResult("storagePath is outside the matters container."));
         }
 
         string connectionString = Environment.GetEnvironmentVariable("MATTERS_STORAGE_CONNECTION") ?? "";
         if (string.IsNullOrEmpty(connectionString))
         {
-            return new ObjectResult(new { error = "MATTERS_STORAGE_CONNECTION app setting is not configured." }) { StatusCode = 500 };
+            return (null, new ObjectResult(new { error = "MATTERS_STORAGE_CONNECTION app setting is not configured." }) { StatusCode = 500 });
         }
 
         string blobName = Uri.UnescapeDataString(blobUrl.Substring(containerBase.Length));
@@ -93,51 +190,16 @@ public class EmlPreviewFunc
             using var stream = new MemoryStream();
             await container.GetBlobClient(blobName).DownloadToAsync(stream);
             stream.Position = 0;
-
-            var message = MimeMessage.Load(stream);
-
-            string? html = message.HtmlBody;
-            if (html != null)
-            {
-                html = InlineCidImages(html, message);
-                html = Sanitize(html);
-            }
-
-            var attachments = new List<AttachmentInfo>();
-            foreach (MimeEntity entity in message.Attachments)
-            {
-                string? name = entity.ContentDisposition?.FileName ?? entity.ContentType?.Name;
-                if (string.IsNullOrWhiteSpace(name)) { continue; }
-                long size = 0;
-                if (entity is MimePart part && part.Content != null)
-                {
-                    using var counter = new MemoryStream();
-                    part.Content.DecodeTo(counter);
-                    size = counter.Length;
-                }
-                attachments.Add(new AttachmentInfo { Name = name, SizeBytes = size });
-            }
-
-            return new OkObjectResult(new
-            {
-                subject = message.Subject ?? "",
-                from = message.From.ToString(),
-                to = message.To.Select(a => a.ToString()).ToArray(),
-                cc = message.Cc.Select(a => a.ToString()).ToArray(),
-                date = message.Date.ToString("o"),
-                htmlBody = html,
-                textBody = message.TextBody ?? "",
-                attachments
-            });
+            return (MimeMessage.Load(stream), null);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
-            return new NotFoundObjectResult("The .eml blob was not found.");
+            return (null, new NotFoundObjectResult("The .eml blob was not found."));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Preview failed for blob {BlobName}", blobName);
-            return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+            _logger.LogError(ex, "Failed loading blob {BlobName}", blobName);
+            return (null, new ObjectResult(new { error = ex.Message }) { StatusCode = 500 });
         }
     }
 
@@ -155,6 +217,32 @@ public class EmlPreviewFunc
         if (padding < 0 || padding > 2) { throw new FormatException("Bad padding digit."); }
         string b64 = value[..^1].Replace('-', '+').Replace('_', '/') + new string('=', padding);
         return Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+    }
+
+    internal static string InferContentType(string fileName)
+    {
+        string ext = Path.GetExtension(fileName).TrimStart('.').ToLowerInvariant();
+        return ext switch
+        {
+            "pdf" => "application/pdf",
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "bmp" => "image/bmp",
+            "tif" or "tiff" => "image/tiff",
+            "txt" or "log" => "text/plain",
+            "htm" or "html" => "text/html",
+            "csv" => "text/csv",
+            "doc" => "application/msword",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls" => "application/vnd.ms-excel",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt" => "application/vnd.ms-powerpoint",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "zip" => "application/zip",
+            "eml" => "message/rfc822",
+            _ => "application/octet-stream"
+        };
     }
 
     /// <summary>Replaces cid: references with data: URIs so inline images

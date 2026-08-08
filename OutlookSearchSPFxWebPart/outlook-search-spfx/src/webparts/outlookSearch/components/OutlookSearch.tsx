@@ -238,6 +238,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
           item={selected}
           preview={preview}
           fallbackText={fallbackText}
+          emlPreviewUrl={emlPreviewUrl}
           loading={contentLoading}
           error={contentError}
         />

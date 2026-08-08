@@ -10,6 +10,8 @@ export interface IReadingPaneProps {
   preview: IEmailPreview | undefined;
   /** Plain-text fallback from the index when the preview service is unavailable. */
   fallbackText: string | undefined;
+  /** EmlPreviewFunc endpoint (incl. ?code=); '' disables attachment opening. */
+  emlPreviewUrl: string;
   loading: boolean;
   error: string | undefined;
 }
@@ -42,7 +44,7 @@ function buildSrcDoc(html: string): string {
 }
 
 export const ReadingPane: React.FC<IReadingPaneProps> = (props) => {
-  const { item, preview, fallbackText, loading, error } = props;
+  const { item, preview, fallbackText, emlPreviewUrl, loading, error } = props;
 
   if (!item) {
     return (
@@ -82,17 +84,36 @@ export const ReadingPane: React.FC<IReadingPaneProps> = (props) => {
 
       {attachments.length > 0 && (
         <div className={styles.attachmentRow}>
-          {attachments.map((a) => (
-            <span key={a.name} className={styles.attachmentCard}>
-              <Icon iconName={fileTypeIcon(a.name)} className={styles.attachmentCardIcon} />
-              <span className={styles.attachmentCardText}>
-                <span className={styles.attachmentCardName}>{a.name}</span>
-                {a.sizeBytes > 0 && (
-                  <span className={styles.attachmentCardSize}>{formatSize(a.sizeBytes)}</span>
-                )}
-              </span>
-            </span>
-          ))}
+          {attachments.map((a) => {
+            const inner = (
+              <>
+                <Icon iconName={fileTypeIcon(a.name)} className={styles.attachmentCardIcon} />
+                <span className={styles.attachmentCardText}>
+                  <span className={styles.attachmentCardName}>{a.name}</span>
+                  {a.sizeBytes > 0 && (
+                    <span className={styles.attachmentCardSize}>{formatSize(a.sizeBytes)}</span>
+                  )}
+                </span>
+              </>
+            );
+            // Clicking opens the attachment via EmlPreviewFunc, which streams
+            // it with its real MIME type — PDFs/images render in the new tab,
+            // Office documents download under their original file name.
+            return emlPreviewUrl ? (
+              <a
+                key={a.name}
+                className={styles.attachmentCard}
+                href={`${emlPreviewUrl}&path=${encodeURIComponent(item.storagePath)}&att=${encodeURIComponent(a.name)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open ${a.name}`}
+              >
+                {inner}
+              </a>
+            ) : (
+              <span key={a.name} className={styles.attachmentCard}>{inner}</span>
+            );
+          })}
         </div>
       )}
 

@@ -60,7 +60,10 @@ function dateGroup(iso: string): string {
   const dayMs = 24 * 60 * 60 * 1000;
   const diffDays = Math.floor((startOfDay(now) - startOfDay(d)) / dayMs);
 
-  if (diffDays <= 0) { return 'Today'; }
+  // Delayed-delivery emails carry a future Date: header (the scheduled send
+  // time) — label them instead of lumping them into Today.
+  if (diffDays < 0) { return 'Scheduled'; }
+  if (diffDays === 0) { return 'Today'; }
   if (diffDays === 1) { return 'Yesterday'; }
   // Weeks starting Monday, matching the firm's calendar convention.
   const mondayOffset = (now.getDay() + 6) % 7;
