@@ -8,4 +8,6 @@ export interface IOutlookSearchProps {
   apiVersion: string;
   suggesterName: string;
   pageSize: number;
+  /** EmlPreviewFunc endpoint incl. ?code= key; empty = plain-text fallback. */
+  emlPreviewUrl: string;
 }

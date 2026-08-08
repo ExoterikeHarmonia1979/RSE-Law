@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { MessageBar, MessageBarType } from '@fluentui/react';
 import { IOutlookSearchProps } from './IOutlookSearchProps';
-import { IEmailItem } from '../models/IEmailItem';
+import { IEmailItem, IEmailPreview } from '../models/IEmailItem';
 import { AzureSearchService } from '../services/AzureSearchService';
 import { SearchBar } from './SearchBar';
 import { EmailList } from './EmailList';
@@ -25,7 +25,7 @@ function loadListWidth(): number {
 }
 
 const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
-  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize } = props;
+  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl } = props;
 
   const service = React.useMemo(
     () => new AzureSearchService(httpClient, {
@@ -46,7 +46,8 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const [orderByDate, setOrderByDate] = React.useState(true);
 
   const [selected, setSelected] = React.useState<IEmailItem | undefined>(undefined);
-  const [content, setContent] = React.useState<string | undefined>(undefined);
+  const [preview, setPreview] = React.useState<IEmailPreview | undefined>(undefined);
+  const [fallbackText, setFallbackText] = React.useState<string | undefined>(undefined);
   const [contentLoading, setContentLoading] = React.useState(false);
   const [contentError, setContentError] = React.useState<string | undefined>(undefined);
 
@@ -104,7 +105,8 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
         setListLoading(false);
         if (!append) {
           setSelected(undefined);
-          setContent(undefined);
+          setPreview(undefined);
+          setFallbackText(undefined);
           setContentError(undefined);
         }
       })
@@ -138,13 +140,25 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
 
   const handleSelect = React.useCallback((item: IEmailItem): void => {
     setSelected(item);
-    setContent(undefined);
+    setPreview(undefined);
+    setFallbackText(undefined);
     setContentError(undefined);
     setContentLoading(true);
-    service.getContent(item.storagePath)
-      .then((text) => { setContent(text); setContentLoading(false); })
-      .catch((err: Error) => { setContentError(err.message); setContentLoading(false); });
-  }, [service]);
+
+    const loadFallback = (): void => {
+      service.getContent(item.storagePath)
+        .then((text) => { setFallbackText(text); setContentLoading(false); })
+        .catch((err: Error) => { setContentError(err.message); setContentLoading(false); });
+    };
+
+    if (emlPreviewUrl) {
+      service.getPreview(emlPreviewUrl, item.storagePath)
+        .then((p) => { setPreview(p); setContentLoading(false); })
+        .catch(() => loadFallback()); // degrade to index text if the function is down
+    } else {
+      loadFallback();
+    }
+  }, [service, emlPreviewUrl]);
 
   const getSuggestions = React.useCallback(
     (text: string): Promise<string[]> => service.suggest(text),
@@ -198,7 +212,8 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
         />
         <ReadingPane
           item={selected}
-          content={content}
+          preview={preview}
+          fallbackText={fallbackText}
           loading={contentLoading}
           error={contentError}
         />

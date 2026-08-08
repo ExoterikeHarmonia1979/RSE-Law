@@ -10,6 +10,8 @@ declare interface IOutlookSearchWebPartStrings {
   SuggesterNameLabel: string;
   SuggesterNameDescription: string;
   PageSizeLabel: string;
+  EmlPreviewUrlLabel: string;
+  EmlPreviewUrlDescription: string;
 }
 
 declare module 'OutlookSearchWebPartStrings' {

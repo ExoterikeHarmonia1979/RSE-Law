@@ -10,6 +10,8 @@ define([], function() {
     "ApiVersionLabel": "API version",
     "SuggesterNameLabel": "Suggester name",
     "SuggesterNameDescription": "Name of the suggester defined on the index (leave empty to disable type-ahead).",
-    "PageSizeLabel": "Results per page"
+    "PageSizeLabel": "Results per page",
+    "EmlPreviewUrlLabel": "EML preview service URL",
+    "EmlPreviewUrlDescription": "EmlPreviewFunc endpoint including its ?code= function key. Renders the original email HTML; leave empty to show plain extracted text."
   }
 });

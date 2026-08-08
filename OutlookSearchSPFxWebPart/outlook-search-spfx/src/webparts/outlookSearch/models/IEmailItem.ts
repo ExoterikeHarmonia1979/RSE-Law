@@ -25,6 +25,24 @@ export interface ISearchPage {
   totalCount: number;
 }
 
+export interface IPreviewAttachment {
+  name: string;
+  sizeBytes: number;
+}
+
+/** Outlook-fidelity preview returned by the EmlPreviewFunc Azure Function. */
+export interface IEmailPreview {
+  subject: string;
+  from: string;
+  to: string[];
+  cc: string[];
+  date: string;
+  /** Sanitized HTML body (cid: images inlined); undefined when the mail is plain text. */
+  htmlBody: string | undefined;
+  textBody: string;
+  attachments: IPreviewAttachment[];
+}
+
 export interface ISuggestion {
   text: string;
   /** 'recent' = from localStorage history, 'server' = from the suggester. */

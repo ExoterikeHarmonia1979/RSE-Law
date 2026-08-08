@@ -1,5 +1,5 @@
 import { HttpClient, HttpClientResponse, IHttpClientOptions } from '@microsoft/sp-http';
-import { IEmailItem, ISearchPage } from '../models/IEmailItem';
+import { IEmailItem, IEmailPreview, ISearchPage } from '../models/IEmailItem';
 import { parseOutlookQuery } from './OutlookQueryParser';
 
 export interface IAzureSearchConfig {
@@ -138,6 +138,32 @@ export class AzureSearchService {
     });
     const doc = (json.value && json.value[0]) || {};
     return typeof doc.content === 'string' ? doc.content : '';
+  }
+
+  /**
+   * Outlook-fidelity preview from the EmlPreviewFunc Azure Function: real
+   * HTML body, recipients, and attachment names/sizes from the original .eml.
+   * previewUrl must already include the ?code= function key.
+   */
+  public async getPreview(previewUrl: string, storagePath: string): Promise<IEmailPreview> {
+    const response = await this._http.post(previewUrl, HttpClient.configurations.v1, {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storagePath })
+    });
+    if (!response.ok) {
+      throw new Error(`Preview service failed (HTTP ${response.status})`);
+    }
+    const json = await response.json();
+    return {
+      subject: typeof json.subject === 'string' ? json.subject : '',
+      from: typeof json.from === 'string' ? json.from : '',
+      to: Array.isArray(json.to) ? json.to : [],
+      cc: Array.isArray(json.cc) ? json.cc : [],
+      date: typeof json.date === 'string' ? json.date : '',
+      htmlBody: typeof json.htmlBody === 'string' ? json.htmlBody : undefined,
+      textBody: typeof json.textBody === 'string' ? json.textBody : '',
+      attachments: Array.isArray(json.attachments) ? json.attachments : []
+    };
   }
 
   /** Type-ahead suggestions from the index suggester (if one is configured). */
