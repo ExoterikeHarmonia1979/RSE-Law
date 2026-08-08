@@ -70,30 +70,43 @@ public class EmlAttachmentNamesSkill
             return new BadRequestObjectResult("Expected a 'values' array.");
         }
 
-        var results = request.Values.Select(record => new
+        var results = request.Values.Select(record =>
         {
-            recordId = record.RecordId,
-            data = new { attachmentNames = ExtractNames(record) },
-            errors = (object?)null,
-            warnings = (object?)null
+            var (names, sentDate) = ParseMessage(record);
+            return new
+            {
+                recordId = record.RecordId,
+                data = new { attachmentNames = names, sentDate },
+                errors = (object?)null,
+                warnings = (object?)null
+            };
         });
 
         return new OkObjectResult(new { values = results });
     }
 
-    private List<string> ExtractNames(SkillRecord record)
+    private (List<string> Names, string? SentDate) ParseMessage(SkillRecord record)
     {
         var names = new List<string>();
+        string? sentDate = null;
         var base64 = record.Data.FileData?.Data;
         if (string.IsNullOrEmpty(base64))
         {
-            return names;
+            return (names, sentDate);
         }
 
         try
         {
             using var stream = new MemoryStream(Convert.FromBase64String(base64));
             var message = MimeMessage.Load(stream);
+
+            // The Date: header is the true sent time — unlike the indexer's
+            // metadata_creation_date, which carries the EVENT date for meeting
+            // invites. The index sorts and filters on this value (sent_date).
+            if (message.Date != DateTimeOffset.MinValue)
+            {
+                sentDate = message.Date.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+            }
 
             // message.Attachments = entities with Content-Disposition: attachment.
             // Inline images (signature logos etc.) are deliberately excluded,
@@ -110,11 +123,11 @@ public class EmlAttachmentNamesSkill
         }
         catch (Exception ex)
         {
-            // Non-MIME input (.msg, corrupt file): return no names rather than
+            // Non-MIME input (.msg, corrupt file): return no data rather than
             // failing the whole indexer batch for one bad document.
             _logger.LogWarning(ex, "Could not parse message for record {RecordId}", record.RecordId);
         }
 
-        return names;
+        return (names, sentDate);
     }
 }

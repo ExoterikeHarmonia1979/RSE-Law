@@ -24,7 +24,7 @@ const FIELD_MAP: { [prefix: string]: string } = {
   subject: 'metadata_subject'
 };
 
-const DATE_FIELD = 'metadata_creation_date';
+const DATE_FIELD = 'sent_date';
 
 /** Escape characters that are operators in the full Lucene syntax. */
 function escapeLucene(term: string): string {

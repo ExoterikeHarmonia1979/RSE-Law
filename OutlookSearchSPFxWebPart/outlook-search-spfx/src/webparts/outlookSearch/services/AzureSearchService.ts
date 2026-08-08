@@ -24,6 +24,7 @@ const HL_POST = '\uE001';
 
 const SELECT_FIELDS = [
   'content',
+  'sent_date',
   'metadata_storage_path',
   'metadata_storage_name',
   'metadata_storage_last_modified',
@@ -64,9 +65,11 @@ function toEmailItem(doc: any): IEmailItem {
   // line; the full text is re-fetched on selection for the reading pane.
   const bodyPreview = str(doc, 'content').replace(/\s+/g, ' ').trim().slice(0, 200);
 
-  // Meeting invites (and some malformed mails) carry the EVENT date as the
-  // .eml creation date, which can be in the future. Trust the creation date
-  // only if it's plausible; otherwise use the blob's last-modified time.
+  // sent_date (the .eml Date: header, parsed by the custom skill) is the true
+  // sent time and matches what the index sorts on. metadata_creation_date is
+  // the fallback but carries the EVENT date for meeting invites, so it is
+  // trusted only when plausible; last resort is the blob's last-modified time.
+  const sent = str(doc, 'sent_date');
   const created = str(doc, 'metadata_creation_date');
   const modified = str(doc, 'metadata_storage_last_modified');
   const createdMs = Date.parse(created);
@@ -80,7 +83,7 @@ function toEmailItem(doc: any): IEmailItem {
     to: str(doc, 'metadata_message_to'),
     cc: str(doc, 'metadata_message_cc'),
     subject: str(doc, 'metadata_subject') || str(doc, 'metadata_storage_name'),
-    date: plausible ? created : (modified || created),
+    date: sent || (plausible ? created : (modified || created)),
     snippetHtml: toSnippetHtml(highlights.content),
     attachmentNames: attachments as string[]
   };
@@ -112,9 +115,10 @@ export class AzureSearchService {
       body.filter = parsed.filter;
     }
     if (options.orderByDate) {
-      // Sort on blob last-modified: creation date is unreliable for meeting
-      // invites (event date, possibly future) and would float them to the top.
-      body.orderby = 'metadata_storage_last_modified desc';
+      // sent_date is the .eml Date: header — the same value the UI displays
+      // and groups by, so order and group headers always agree. Documents the
+      // skill could not parse have no sent_date and sort to the end.
+      body.orderby = 'sent_date desc';
     }
 
     const json = await this._post(`/docs/search`, body);

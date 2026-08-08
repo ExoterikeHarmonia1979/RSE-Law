@@ -75,6 +75,14 @@
       "facetable": false
     },
     {
+      "name": "sent_date",
+      "type": "Edm.DateTimeOffset",
+      "searchable": false,
+      "filterable": true,
+      "sortable": true,
+      "facetable": false
+    },
+    {
       "name": "attachment_names",
       "type": "Collection(Edm.String)",
       "searchable": true,

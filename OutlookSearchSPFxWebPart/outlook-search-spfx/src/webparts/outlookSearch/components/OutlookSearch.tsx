@@ -24,6 +24,15 @@ function loadListWidth(): number {
   return isNaN(n) ? LIST_WIDTH_DEFAULT : n;
 }
 
+/** Newest first; undated items sink to the bottom. Guarantees the visible
+ * order always matches the displayed dates and group headers. */
+function sortByDateDesc(items: IEmailItem[]): IEmailItem[] {
+  return items.slice().sort((a, b) => {
+    const ta = Date.parse(a.date); const tb = Date.parse(b.date);
+    return (isNaN(tb) ? -Infinity : tb) - (isNaN(ta) ? -Infinity : ta);
+  });
+}
+
 const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl } = props;
 
@@ -100,7 +109,10 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     service.search(q, { top: pageSize, skip, orderByDate: byDate })
       .then((page) => {
         if (seq !== searchSeq.current) { return; } // superseded by a newer search
-        setItems((prev) => append ? prev.concat(page.items) : page.items);
+        setItems((prev) => {
+          const merged = append ? prev.concat(page.items) : page.items;
+          return byDate ? sortByDateDesc(merged) : merged;
+        });
         setTotalCount(page.totalCount);
         setListLoading(false);
         if (!append) {

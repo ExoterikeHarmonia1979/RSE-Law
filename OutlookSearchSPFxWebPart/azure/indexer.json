@@ -8,15 +8,16 @@
   },
   "parameters": {
     "batchSize": null,
-    "maxFailedItems": 25,
-    "maxFailedItemsPerBatch": 10,
+    "maxFailedItems": 100,
+    "maxFailedItemsPerBatch": 20,
     "configuration": {
       "indexedFileNameExtensions": ".eml,.msg",
       "dataToExtract": "contentAndMetadata",
       "parsingMode": "default",
       "failOnUnsupportedContentType": false,
       "failOnUnprocessableDocument": false,
-      "allowSkillsetToReadFileData": true
+      "allowSkillsetToReadFileData": true,
+      "indexStorageMetadataOnlyForOversizedDocuments": true
     }
   },
   "fieldMappings": [
@@ -30,6 +31,10 @@
     {
       "sourceFieldName": "/document/attachmentNames",
       "targetFieldName": "attachment_names"
+    },
+    {
+      "sourceFieldName": "/document/sentDate",
+      "targetFieldName": "sent_date"
     }
   ]
 }

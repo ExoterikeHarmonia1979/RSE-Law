@@ -7,14 +7,15 @@
       "name": "eml-attachment-names",
       "uri": "https://regexazfunc.azurewebsites.net/api/EmlAttachmentNamesSkill?code=__FUNCTION_KEY__",
       "httpMethod": "POST",
-      "timeout": "PT90S",
-      "batchSize": 8,
+      "timeout": "PT230S",
+      "batchSize": 2,
       "context": "/document",
       "inputs": [
         { "name": "file_data", "source": "/document/file_data" }
       ],
       "outputs": [
-        { "name": "attachmentNames", "targetName": "attachmentNames" }
+        { "name": "attachmentNames", "targetName": "attachmentNames" },
+        { "name": "sentDate", "targetName": "sentDate" }
       ]
     }
   ]
