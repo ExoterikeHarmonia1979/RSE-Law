@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Persona, PersonaSize, Icon, Spinner, SpinnerSize } from '@fluentui/react';
 import { IEmailItem, IEmailPreview } from '../models/IEmailItem';
-import { displayName, fileTypeIcon } from './EmailList';
+import { displayName, fileTypeIcon, fileTypeColor } from './EmailList';
 import styles from './OutlookSearch.module.scss';
 
 export interface IReadingPaneProps {
@@ -87,7 +87,7 @@ export const ReadingPane: React.FC<IReadingPaneProps> = (props) => {
           {attachments.map((a) => {
             const inner = (
               <>
-                <Icon iconName={fileTypeIcon(a.name)} className={styles.attachmentCardIcon} />
+                <Icon iconName={fileTypeIcon(a.name)} className={styles.attachmentCardIcon} style={{ color: fileTypeColor(a.name) }} />
                 <span className={styles.attachmentCardText}>
                   <span className={styles.attachmentCardName}>{a.name}</span>
                   {a.sizeBytes > 0 && (

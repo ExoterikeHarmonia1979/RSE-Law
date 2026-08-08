@@ -219,6 +219,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
           orderByDate={orderByDate}
           hasMore={items.length < totalCount}
           width={listWidth}
+          emlPreviewUrl={emlPreviewUrl}
           onSelect={handleSelect}
           onToggleSort={handleToggleSort}
           onLoadMore={handleLoadMore}

@@ -12,6 +12,8 @@ export interface IEmailListProps {
   hasMore: boolean;
   /** Pane width in px — controlled by the splitter in OutlookSearch. */
   width: number;
+  /** EmlPreviewFunc endpoint (incl. ?code=); '' renders chips non-clickable. */
+  emlPreviewUrl: string;
   onSelect: (item: IEmailItem) => void;
   onToggleSort: () => void;
   onLoadMore: () => void;
@@ -49,6 +51,21 @@ export function fileTypeIcon(name: string): string {
   }
 }
 
+/** Office-brand colors so attachment icons read like Outlook's. */
+export function fileTypeColor(name: string): string {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  switch (ext) {
+    case 'xls': case 'xlsx': case 'csv': return '#107c41'; // Excel green
+    case 'doc': case 'docx': return '#185abd';             // Word blue
+    case 'ppt': case 'pptx': return '#c43e1c';             // PowerPoint orange
+    case 'pdf': return '#b30b00';                          // Acrobat red
+    case 'jpg': case 'jpeg': case 'png': case 'gif': case 'bmp': case 'tif': case 'tiff': return '#8764b8';
+    case 'msg': case 'eml': return '#0f6cbd';
+    case 'zip': case '7z': case 'rar': return '#8a8886';
+    default: return '#605e5c';
+  }
+}
+
 const MAX_LIST_CHIPS = 3;
 
 /** Outlook-style date buckets: Today, Yesterday, This Week, Last Week, ... */
@@ -76,7 +93,7 @@ function dateGroup(iso: string): string {
 export const EmailList: React.FC<IEmailListProps> = (props) => {
   const {
     items, totalCount, selectedPath, loading, orderByDate,
-    hasMore, width, onSelect, onToggleSort, onLoadMore
+    hasMore, width, emlPreviewUrl, onSelect, onToggleSort, onLoadMore
   } = props;
 
   let lastGroup: string | undefined;
@@ -145,10 +162,23 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
                     <div className={styles.itemAttachRow}>
                       {item.attachmentNames.slice(0, MAX_LIST_CHIPS).map((name) => (
                         <TooltipHost content={name} key={name}>
-                          <span className={styles.itemAttachChip}>
-                            <Icon iconName={fileTypeIcon(name)} className={styles.itemAttachChipIcon} />
-                            <span className={styles.itemAttachChipName}>{name}</span>
-                          </span>
+                          {emlPreviewUrl ? (
+                            <a
+                              className={styles.itemAttachChip}
+                              href={`${emlPreviewUrl}&path=${encodeURIComponent(item.storagePath)}&att=${encodeURIComponent(name)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation() /* open the file, don't just select the row */}
+                            >
+                              <Icon iconName={fileTypeIcon(name)} className={styles.itemAttachChipIcon} style={{ color: fileTypeColor(name) }} />
+                              <span className={styles.itemAttachChipName}>{name}</span>
+                            </a>
+                          ) : (
+                            <span className={styles.itemAttachChip}>
+                              <Icon iconName={fileTypeIcon(name)} className={styles.itemAttachChipIcon} style={{ color: fileTypeColor(name) }} />
+                              <span className={styles.itemAttachChipName}>{name}</span>
+                            </span>
+                          )}
                         </TooltipHost>
                       ))}
                       {item.attachmentNames.length > MAX_LIST_CHIPS && (

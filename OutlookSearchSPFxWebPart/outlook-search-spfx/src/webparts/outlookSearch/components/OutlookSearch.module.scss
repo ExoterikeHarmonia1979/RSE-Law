@@ -313,6 +313,13 @@ $text-secondary: #616161;
   font-size: 11px;
   background: #ffffff;
   color: $text-primary;
+  text-decoration: none;
+
+  &:hover {
+    background: $hover-bg;
+    border-color: $outlook-blue;
+    text-decoration: none;
+  }
 }
 
 .itemAttachChipIcon {

@@ -25,6 +25,7 @@ const HL_POST = '\uE001';
 const SELECT_FIELDS = [
   'content',
   'sent_date',
+  'attachment_names',
   'metadata_storage_path',
   'metadata_storage_name',
   'metadata_storage_last_modified',
