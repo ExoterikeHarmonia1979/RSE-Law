@@ -26,7 +26,7 @@ $def.triggers = @{
   'When_a_message_is_received_in_a_queue_(peek-lock)' = @{
     type       = 'ApiConnection'
     recurrence = @{ frequency = 'Minute'; interval = 1 }
-    runtimeConfiguration = @{ concurrency = @{ runs = 25 } }
+    runtimeConfiguration = @{ concurrency = @{ runs = 40 } }
     inputs     = @{
       host    = $SB
       method  = 'get'
@@ -120,22 +120,40 @@ $found.actions = @{
 # --------------------------------- 3. matter lookup: one query, deterministic
 $regex = $notEmpty.If_Subject_has_Reg_Ex_Match
 
-# candidate words: drop blanks, dedupe, cap so the OData $filter cannot blow the URL limit
-$words = "@take(union(filter(outputs('Split_Subject_into_array'), not(equals(trim(item()), ''))), createArray()), 20)"
-
-$filterExpr = "@join(select(outputs('Candidate_Subject_Words'), concat(" +
-              "'RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')), ' or ')"
+# NB: filter/select are Logic App ACTIONS (Query / Select), not expression functions.
+# Only join/union/take/length/string/greater exist as expressions.
+$clauseExpr = "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')"
+$filterExpr = "@join(body('Build_Lookup_Clauses'), ' or ')"
 
 $regex.else = @{ actions = @{
   Split_Subject_into_array = $regex.else.actions.Split_Subject_into_array
+  # drop noise words; matter/case/claim numbers are all >2 chars (06.145, 24STCV24941)
+  # and the splitter does not break on '.' or '-', so they survive intact
+  Filter_Subject_Words = @{
+    type = 'Query'
+    runAfter = @{ Split_Subject_into_array = @('Succeeded') }
+    inputs = @{
+      from  = "@outputs('Split_Subject_into_array')"
+      where = "@greater(length(string(item())), 2)"
+    }
+  }
+  # union(x, x) is the dedupe idiom; take() caps the OData $filter so it cannot blow the URL limit
   Candidate_Subject_Words = @{
     type = 'Compose'
-    runAfter = @{ Split_Subject_into_array = @('Succeeded') }
-    inputs = $words
+    runAfter = @{ Filter_Subject_Words = @('Succeeded') }
+    inputs = "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)"
+  }
+  Build_Lookup_Clauses = @{
+    type = 'Select'
+    runAfter = @{ Candidate_Subject_Words = @('Succeeded') }
+    inputs = @{
+      from   = "@outputs('Candidate_Subject_Words')"
+      select = $clauseExpr
+    }
   }
   Set_variable_blnKeepProcessing = @{
     type = 'SetVariable'
-    runAfter = @{ Candidate_Subject_Words = @('Succeeded') }
+    runAfter = @{ Build_Lookup_Clauses = @('Succeeded') }
     inputs = @{ name = 'blnKeepProcessing'; value = '@true' }
   }
   If_Any_Candidate_Words = @{
@@ -280,3 +298,4 @@ foreach ($n in @($conns.Keys)) { if ($n -notin $keep) { $conns.Remove($n) | Out-
 # emit definition-only payload for PUT
 $res | ConvertTo-Json -Depth 100 | Set-Content $OutPath -Encoding utf8
 Write-Host "wrote $OutPath"
+

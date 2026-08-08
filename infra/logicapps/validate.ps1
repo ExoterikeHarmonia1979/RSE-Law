@@ -40,6 +40,36 @@ foreach($m in ([regex]::Matches($raw,"items\('([^']+)'\)") | ForEach-Object { $_
   else { Ok "items('$m') -> Foreach" }
 }
 
+# ---- functions that look like expressions but are actually ACTIONS in Logic Apps
+Write-Host "`n[2b] invalid expression functions"
+$notFunctions = @('filter','select','join_array','map','where','orderby')
+function ScanExpr($o,$path){
+  if($o -is [string]){
+    if($o.StartsWith('@') -or $o -match '@\{'){
+      foreach($f in $notFunctions){
+        if($o -match "(?<![A-Za-z_])$f\s*\("){ Bad "$path uses '$f(' as an expression; it is an action, not a function" }
+      }
+    }
+  } elseif($o -is [System.Management.Automation.PSCustomObject]){
+    foreach($pr in $o.PSObject.Properties){ ScanExpr $pr.Value "$path.$($pr.Name)" }
+  } elseif($o -is [System.Collections.IEnumerable]){
+    $i=0; foreach($x in $o){ ScanExpr $x "$path[$i]"; $i++ }
+  }
+}
+ScanExpr $def 'definition'
+Ok "no action-only functions used as expressions"
+
+# ---- Query/Select actions have the right input shape
+Write-Host "`n[2c] Query/Select shapes"
+foreach($kv in $all.GetEnumerator()){
+  if($kv.Value.type -eq 'Query'){
+    if(-not $kv.Value.inputs.from -or -not $kv.Value.inputs.where){ Bad "Query '$($kv.Key)' needs from+where" } else { Ok "Query $($kv.Key)" }
+  }
+  if($kv.Value.type -eq 'Select'){
+    if(-not $kv.Value.inputs.from -or -not $kv.Value.inputs.select){ Bad "Select '$($kv.Key)' needs from+select" } else { Ok "Select $($kv.Key)" }
+  }
+}
+
 # ---- the things that MUST be gone
 Write-Host "`n[3] removals"
 $mustGo = @('Create_Email_File','Create_file_New_Site','Create_Microsoft_365_Group','Get_Field_List','Get_Field_List_1',
