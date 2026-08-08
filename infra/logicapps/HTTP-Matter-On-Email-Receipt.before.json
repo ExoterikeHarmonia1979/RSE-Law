@@ -1,0 +1,2515 @@
+{
+  "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Logic/workflows/HTTP-Matter-On-Email-Receipt",
+  "identity": {
+    "principalId": "30701da1-0d55-454a-bf67-bfdd70f93a76",
+    "tenantId": "29b31beb-399c-4432-aa07-9258f6e46620",
+    "type": "SystemAssigned"
+  },
+  "location": "eastus",
+  "name": "HTTP-Matter-On-Email-Receipt",
+  "properties": {
+    "accessEndpoint": "https://prod-48.eastus.logic.azure.com:443/workflows/0d78740afe2045a9a35515c357f7430f",
+    "changedTime": "2026-08-08T21:30:16.0861016Z",
+    "createdTime": "2026-03-31T23:21:15.3369793Z",
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "actions": {
+        "Get_Client_Secret": {
+          "inputs": {
+            "authentication": {
+              "audience": "https://vault.azure.net",
+              "type": "ManagedServiceIdentity"
+            },
+            "method": "GET",
+            "uri": "https://kv-rse-graphsubs.vault.azure.net/secrets/GraphSubClientSecret?api-version=7.4"
+          },
+          "runAfter": {
+            "Parse_JSON": [
+              "Succeeded"
+            ]
+          },
+          "runtimeConfiguration": {
+            "secureData": {
+              "properties": [
+                "outputs"
+              ]
+            }
+          },
+          "type": "Http"
+        },
+        "Get_Message_ID": {
+          "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['Id']",
+          "metadata": {
+            "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
+          },
+          "runAfter": {
+            "HTTP_Get_Access_Token": [
+              "Succeeded"
+            ]
+          },
+          "type": "Compose"
+        },
+        "Get_Message_JSON": {
+          "inputs": "@decodeBase64(triggerBody()?['ContentData'])",
+          "runAfter": {
+            "Initialize_variables": [
+              "Succeeded"
+            ]
+          },
+          "type": "Compose"
+        },
+        "Get_OData_ID": {
+          "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']",
+          "metadata": {
+            "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+          },
+          "runAfter": {
+            "Get_Message_ID": [
+              "Succeeded"
+            ]
+          },
+          "type": "Compose"
+        },
+        "HTTP_Get_Access_Token": {
+          "inputs": {
+            "body": "client_id=43248a7a-1c76-40fd-91b6-57ec5f08639e&client_secret=@{body('Get_Client_Secret')?['value']}&scope=https://graph.microsoft.com/.default&grant_type=client_credentials\n",
+            "headers": {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            "method": "POST",
+            "uri": "https://login.microsoftonline.com/29b31beb-399c-4432-aa07-9258f6e46620/oauth2/v2.0/token"
+          },
+          "runAfter": {
+            "Get_Client_Secret": [
+              "Succeeded"
+            ]
+          },
+          "runtimeConfiguration": {
+            "secureData": {
+              "properties": [
+                "inputs",
+                "outputs"
+              ]
+            }
+          },
+          "type": "Http"
+        },
+        "If_Odata_ID_is_valid": {
+          "actions": {
+            "Compose_Error_Get_Email_via_User_ID": {
+              "inputs": "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
+              "metadata": {
+                "operationMetadataId": "a968906f-3249-446e-98a0-cee49eac566c"
+              },
+              "runAfter": {
+                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                  "Failed"
+                ]
+              },
+              "type": "Compose"
+            },
+            "For_each_CC": {
+              "actions": {
+                "Append_to_string_variable_cc": {
+                  "inputs": {
+                    "name": "strCC",
+                    "value": "@concat(item()?['emailAddress']?['address'],';')"
+                  },
+                  "type": "AppendToStringVariable"
+                }
+              },
+              "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['ccRecipients']",
+              "runAfter": {
+                "Get_Email_To": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            },
+            "For_each_Recipient": {
+              "actions": {
+                "Append_to_string_variable": {
+                  "inputs": {
+                    "name": "strRecipients",
+                    "value": "@concat(item()?['emailAddress']?['address'],';')\r\n"
+                  },
+                  "metadata": {
+                    "operationMetadataId": "b4a3650e-2efc-4e45-8187-cabf1b086969"
+                  },
+                  "type": "AppendToStringVariable"
+                }
+              },
+              "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['toRecipients']",
+              "runAfter": {
+                "Get_Email_From": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach"
+            },
+            "Get_Email_CC": {
+              "inputs": "@variables('strCC')",
+              "runAfter": {
+                "For_each_CC": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "Get_Email_From": {
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['from']?['emailAddress']?['address']",
+              "metadata": {
+                "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
+              },
+              "runAfter": {
+                "Get_Email_Subject": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "Get_Email_Has_Attachments": {
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['hasAttachments']",
+              "metadata": {
+                "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
+              },
+              "runAfter": {
+                "Get_Email_CC": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "Get_Email_Subject": {
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['subject']",
+              "metadata": {
+                "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
+              },
+              "runAfter": {
+                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "Get_Email_To": {
+              "inputs": "@variables('strRecipients')",
+              "metadata": {
+                "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
+              },
+              "runAfter": {
+                "For_each_Recipient": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": {
+              "inputs": {
+                "headers": {
+                  "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                },
+                "method": "GET",
+                "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}"
+              },
+              "metadata": {
+                "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              },
+              "type": "Http"
+            },
+            "If_Has_Attachments": {
+              "actions": {
+                "For_each_Attachment": {
+                  "actions": {
+                    "Append_to_arrAttachments": {
+                      "inputs": {
+                        "name": "arrAttachments",
+                        "value": {
+                          "Content": "@{body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content')}",
+                          "Name": "@{item()?['name']}"
+                        }
+                      },
+                      "runAfter": {
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "AppendToArrayVariable"
+                    },
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": {
+                      "inputs": {
+                        "headers": {
+                          "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                        },
+                        "method": "GET",
+                        "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments/@{item()?['id']}/$value"
+                      },
+                      "metadata": {
+                        "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    }
+                  },
+                  "foreach": "@body('Get_Attachment_JSON')?['value']",
+                  "runAfter": {
+                    "Get_Attachment_JSON": [
+                      "Succeeded",
+                      "Failed"
+                    ]
+                  },
+                  "type": "Foreach"
+                },
+                "Get_Attachment_JSON": {
+                  "inputs": {
+                    "content": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachments')",
+                    "schema": {
+                      "properties": {
+                        "value": {
+                          "items": {
+                            "properties": {
+                              "@@odata.type": {
+                                "type": "string"
+                              },
+                              "contentBytes": {
+                                "type": "string"
+                              },
+                              "contentType": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "isInline": {
+                                "type": "boolean"
+                              },
+                              "lastModifiedDateTime": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "size": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "@@odata.type",
+                              "id",
+                              "lastModifiedDateTime",
+                              "name",
+                              "contentType",
+                              "size",
+                              "isInline"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "runAfter": {
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": [
+                      "Succeeded",
+                      "Failed"
+                    ]
+                  },
+                  "type": "ParseJson"
+                },
+                "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": {
+                  "inputs": {
+                    "headers": {
+                      "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                    },
+                    "method": "GET",
+                    "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments"
+                  },
+                  "metadata": {
+                    "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                  },
+                  "runtimeConfiguration": {
+                    "contentTransfer": {
+                      "transferMode": "Chunked"
+                    }
+                  },
+                  "type": "Http"
+                }
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@outputs('Get_Email_Has_Attachments')",
+                      true
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "Get_Email_Has_Attachments": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            },
+            "Not_empty_subject": {
+              "actions": {
+                "Get_Reg_Ex_Match_All_Subject": {
+                  "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['match']",
+                  "runAfter": {
+                    "HTTP_Az_Func_Reg_Matter_Full_Subject_": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "HTTP_Az_Func_Reg_Matter_Full_Subject_": {
+                  "inputs": {
+                    "body": {
+                      "strData": "@{outputs('Get_Email_Subject')}"
+                    },
+                    "headers": {
+                      "Accept": "application/json"
+                    },
+                    "method": "POST",
+                    "uri": "https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc"
+                  },
+                  "runtimeConfiguration": {
+                    "contentTransfer": {
+                      "transferMode": "Chunked"
+                    }
+                  },
+                  "type": "Http"
+                },
+                "If_BlnFoundItem_and_not_calendar": {
+                  "actions": {
+                    "Create_Email_File": {
+                      "inputs": {
+                        "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/files",
+                        "queries": {
+                          "folderPath": "/Shared Documents/Email",
+                          "name": "@concat(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')\n,'.eml')",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Field_List_1": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Create_Microsoft_365_Group": {
+                      "inputs": {
+                        "body": {
+                          "description": "Public Team created for Matter: @{variables('strFoundMatter')} ",
+                          "displayName": "@{variables('strFoundMatter')}",
+                          "groupTypes": [
+                            "Unified"
+                          ],
+                          "mailEnabled": true,
+                          "mailNickname": "@{replace(variables('strFoundMatter'),'.','')}",
+                          "members@odata.bind": [
+                            "https://graph.microsoft.com/v1.0/users/504a386f-bab2-4a63-aa5e-48d9d63bb327",
+                            "https://graph.microsoft.com/v1.0/users/61da9b08-f011-452a-bacf-d08a4f78546f",
+                            "https://graph.microsoft.com/v1.0/users/4afc9f0e-27d9-48bd-9bf0-8bb8ec1e2d29"
+                          ],
+                          "owners@odata.bind": [
+                            "https://graph.microsoft.com/v1.0/users/504a386f-bab2-4a63-aa5e-48d9d63bb327",
+                            "https://graph.microsoft.com/v1.0/users/61da9b08-f011-452a-bacf-d08a4f78546f",
+                            "https://graph.microsoft.com/v1.0/users/4afc9f0e-27d9-48bd-9bf0-8bb8ec1e2d29"
+                          ],
+                          "resourceBehaviorOptions": [
+                            "WelcomeEmailDisabled"
+                          ],
+                          "resourceProvisioningOptions": [
+                            "Team"
+                          ],
+                          "securityEnabled": false,
+                          "visibility": "Public"
+                        },
+                        "headers": {
+                          "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}",
+                          "Content-Type": "application/json"
+                        },
+                        "method": "POST",
+                        "uri": "https://graph.microsoft.com/v1.0/Groups"
+                      },
+                      "runAfter": {
+                        "Http_Request_to_check_if_SP_Site_Exists": [
+                          "Failed"
+                        ]
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    },
+                    "Create_blob": {
+                      "inputs": {
+                        "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value_New_Site')",
+                        "headers": {
+                          "ReadFileMetadataFromServer": true
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                        "queries": {
+                          "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/",
+                          "name": "@concat(outputs('Get_Email_Subject'),'.eml')",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "Send_an_email_New_Site_Created": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Create_blob_1": {
+                      "inputs": {
+                        "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
+                        "headers": {
+                          "ReadFileMetadataFromServer": true
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                        "queries": {
+                          "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/",
+                          "name": "@concat(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')\n,'.eml')",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "If_contains_matters_email_1": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Create_file_New_Site": {
+                      "inputs": {
+                        "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value_New_Site')",
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/files",
+                        "queries": {
+                          "folderPath": "/Shared Documents/Email",
+                          "name": "@concat(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')\n,'.eml')",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Value_New_Site": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Create_new_folder": {
+                      "inputs": {
+                        "body": {
+                          "path": "Email"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-2']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/tables/@{encodeURIComponent(encodeURIComponent('Documents'))}/createnewfolder"
+                      },
+                      "runAfter": {
+                        "Join_hub_site": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Delay_1_Minute": {
+                      "inputs": {
+                        "interval": {
+                          "count": 1,
+                          "unit": "Minute"
+                        }
+                      },
+                      "type": "Wait"
+                    },
+                    "Delay_5_minutes": {
+                      "inputs": {
+                        "interval": {
+                          "count": 5,
+                          "unit": "Minute"
+                        }
+                      },
+                      "runAfter": {
+                        "Create_Microsoft_365_Group": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "Wait"
+                    },
+                    "Filter_array_Email_Created_Column": {
+                      "inputs": {
+                        "from": "@body('Get_Field_List')['d']['results']",
+                        "where": "@equals(item()['InternalName'], 'EmailCreated')"
+                      },
+                      "runAfter": {
+                        "If_No_HasAttachments_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Query"
+                    },
+                    "Filter_array_From_Column": {
+                      "inputs": {
+                        "from": "@body('Get_Field_List')['d']['results']",
+                        "where": "@equals(item()['InternalName'], 'From')"
+                      },
+                      "runAfter": {
+                        "If_No_To_Column_in_library": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Query"
+                    },
+                    "Filter_array_HasAttachments_Column": {
+                      "inputs": {
+                        "from": "@body('Get_Field_List')['d']['results']",
+                        "where": "@equals(item()['InternalName'], 'HasAttachments')"
+                      },
+                      "runAfter": {
+                        "If_No_Subject_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Query"
+                    },
+                    "Filter_array_Subject_Column": {
+                      "inputs": {
+                        "from": "@body('Get_Field_List')['d']['results']",
+                        "where": "@equals(item()['InternalName'], 'Subject')"
+                      },
+                      "runAfter": {
+                        "If_No_From_Column_in_library": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Query"
+                    },
+                    "Filter_array_To_Column": {
+                      "inputs": {
+                        "from": "@body('Get_Field_List')['d']['results']",
+                        "where": "@equals(item()['InternalName'], 'To')"
+                      },
+                      "runAfter": {
+                        "Create_new_folder": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Query"
+                    },
+                    "For_each_Attachment_1": {
+                      "actions": {
+                        "Append_to_string_variable_AttachmentURL_as_HTML_a-copy": {
+                          "inputs": {
+                            "name": "strAttachmentURL",
+                            "value": "@concat('<a href=\"','https://samatters.blob.core.windows.net/matters/',variables('strFoundMatter'),'/Emails/Attachments/',item()?['Name'], '\" target=\"_blank\">', item()?['name'], '</a><br>')"
+                          },
+                          "runAfter": {
+                            "Create_blob_for_Attachment": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "AppendToStringVariable"
+                        },
+                        "Create_blob_for_Attachment": {
+                          "inputs": {
+                            "body": "@item()?['Content']",
+                            "headers": {
+                              "ReadFileMetadataFromServer": true
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                            "queries": {
+                              "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                              "name": "@item()?['Name']",
+                              "queryParametersSingleEncoded": true
+                            }
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "foreach": "@variables('arrAttachments')",
+                      "runAfter": {
+                        "Set_variable_strAttachmentURL_Null": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "Foreach"
+                    },
+                    "For_each_attachment_in_array": {
+                      "actions": {
+                        "Append_to_string_variable_AttachmentURL_as_HTML_a": {
+                          "inputs": {
+                            "name": "strAttachmentURL",
+                            "value": "@concat('<a href=\"','https://samatters.blob.core.windows.net/matters/',variables('strFoundMatter'),'/Emails/Attachments/',item()?['Name'], '\" target=\"_blank\">', item()?['name'], '</a><br>')"
+                          },
+                          "runAfter": {
+                            "Create_blob_Attachment_1": [
+                              "Succeeded",
+                              "Failed"
+                            ]
+                          },
+                          "type": "AppendToStringVariable"
+                        },
+                        "Create_blob_Attachment_1": {
+                          "inputs": {
+                            "body": "@item()?['Content']",
+                            "headers": {
+                              "ReadFileMetadataFromServer": true
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                            "queries": {
+                              "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                              "name": "@item()?['Name']",
+                              "queryParametersSingleEncoded": true
+                            }
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "foreach": "@variables('arrAttachments')",
+                      "runAfter": {
+                        "Set_variable_strAttachmentURL_Blank": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Foreach"
+                    },
+                    "Get_Field_List": {
+                      "inputs": {
+                        "body": {
+                          "headers": {
+                            "accept": "application/json;odata=verbose",
+                            "content-type": "application/json;odata=verbose"
+                          },
+                          "method": "GET",
+                          "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-5']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                      },
+                      "runAfter": {
+                        "Delay_5_minutes": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Get_Field_List_1": {
+                      "inputs": {
+                        "body": {
+                          "headers": {
+                            "accept": "application/json;odata=verbose",
+                            "content-type": "application/json;odata=verbose"
+                          },
+                          "method": "GET",
+                          "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-5']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                      },
+                      "runAfter": {
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_Value": {
+                      "inputs": {
+                        "headers": {
+                          "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                        },
+                        "method": "GET",
+                        "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
+                      },
+                      "metadata": {
+                        "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                      },
+                      "runAfter": {
+                        "Http_Request_to_check_if_SP_Site_Exists": [
+                          "Succeeded"
+                        ]
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    },
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_Value_New_Site": {
+                      "inputs": {
+                        "headers": {
+                          "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                        },
+                        "method": "GET",
+                        "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
+                      },
+                      "metadata": {
+                        "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                      },
+                      "runAfter": {
+                        "If_No_EmailCreated_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    },
+                    "Http_Request_to_check_if_SP_Site_Exists": {
+                      "inputs": {
+                        "body": {
+                          "method": "GET",
+                          "uri": "_api/site"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-2']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                      },
+                      "runAfter": {
+                        "Delay_1_Minute": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "If_No_EmailCreated_Column": {
+                      "actions": {
+                        "Add_EmailCreated_Column_to_View": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"strField\":\"EmailCreated\"\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "runAfter": {
+                            "Create_EmailCreated_Column_in_Documents": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "Create_EmailCreated_Column_in_Documents": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"__metadata\": { \"type\": \"SP.Field\" },\n  \"Title\": \"EmailCreated\",\n  \"FieldTypeKind\": 4,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@length(body('Filter_array_Email_Created_Column'))",
+                              0
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Filter_array_Email_Created_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_No_From_Column_in_library": {
+                      "actions": {
+                        "Add_From_Column_To_View": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"strField\":\"From\"\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "runAfter": {
+                            "Create_From_Column_in_Documents": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "Create_From_Column_in_Documents": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"__metadata\": { \"type\": \"SP.Field\" },\n  \"Title\": \"From\",\n  \"FieldTypeKind\": 2,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@length(body('Filter_array_From_Column'))",
+                              0
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Filter_array_From_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_No_HasAttachments_Column": {
+                      "actions": {
+                        "Add_HasAttachments_to_View": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"strField\":\"HasAttachments\"\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "runAfter": {
+                            "Create_HasAttachments_Column_in_Documents": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "Create_HasAttachments_Column_in_Documents": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"__metadata\": { \"type\": \"SP.Field\" },\n  \"Title\": \"HasAttachments\",\n  \"FieldTypeKind\": 2,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@length(body('Filter_array_HasAttachments_Column'))",
+                              0
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Filter_array_HasAttachments_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_No_Subject_Column": {
+                      "actions": {
+                        "Add_Subject_Column_to_View": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"strField\":\"Subject\"\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "runAfter": {
+                            "Create_Subject_Column_in_Documents": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "Create_Subject_Column_in_Documents": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"__metadata\": { \"type\": \"SP.Field\" },\n  \"Title\": \"Subject\",\n  \"FieldTypeKind\": 2,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@length(body('Filter_array_Subject_Column'))",
+                              0
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Filter_array_Subject_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_No_To_Column_in_library": {
+                      "actions": {
+                        "Add_To_Column_To_View": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"strField\":\"To\"\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "runAfter": {
+                            "Create_To_Column_in_Documents": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "Create_To_Column_in_Documents": {
+                          "inputs": {
+                            "body": {
+                              "body": "{\n  \"__metadata\": { \"type\": \"SP.Field\" },\n  \"Title\": \"To\",\n  \"FieldTypeKind\": 2,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false\n}",
+                              "headers": {
+                                "accept": "application/json;odata=verbose",
+                                "content-type": "application/json;odata=verbose"
+                              },
+                              "method": "POST",
+                              "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@length(body('Filter_array_To_Column'))",
+                              0
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Filter_array_To_Column": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_contains_matters_email": {
+                      "actions": {
+                        "HTTP_Graph_API_Call_to_Move_Email_Message": {
+                          "inputs": {
+                            "body": {
+                              "destinationId": "deleteditems"
+                            },
+                            "headers": {
+                              "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}",
+                              "Content-Type": "application/json"
+                            },
+                            "method": "POST",
+                            "uri": "https://graph.microsoft.com/v1.0/Users/matters@rse-law.com/messages/@{outputs('Get_Message_ID')}/move"
+                          },
+                          "metadata": {
+                            "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "type": "Http"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "or": [
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_To'))",
+                              "matters@rse-law.com"
+                            ]
+                          },
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_From'))",
+                              "matters@rse-law.com"
+                            ]
+                          },
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_CC'))",
+                              "matters@rse-law.com"
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Create_file_New_Site": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_contains_matters_email_1": {
+                      "actions": {
+                        "HTTP_Graph_API_Call_to_Move_Email_Message_1": {
+                          "inputs": {
+                            "body": {
+                              "destinationId": "deleteditems"
+                            },
+                            "headers": {
+                              "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}",
+                              "Content-Type": "application/json"
+                            },
+                            "method": "POST",
+                            "uri": "https://graph.microsoft.com/v1.0/Users/matters@rse-law.com/messages/@{outputs('Get_Message_ID')}/move"
+                          },
+                          "metadata": {
+                            "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "type": "Http"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "or": [
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_To'))",
+                              "matters@rse-law.com"
+                            ]
+                          },
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_From'))",
+                              "matters@rse-law.com"
+                            ]
+                          },
+                          {
+                            "contains": [
+                              "@toLower(outputs('Get_Email_CC'))",
+                              "matters@rse-law.com"
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Create_Email_File": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_strArttachmentURL_is_not_null": {
+                      "actions": {
+                        "Filter_array_AttachmentLinks_Column": {
+                          "inputs": {
+                            "from": "@body('Get_Field_List')['d']['results']",
+                            "where": "@equals(item()['InternalName'], 'AttachmentLinks')"
+                          },
+                          "type": "Query"
+                        },
+                        "If_No_AttachmentLinks_Column": {
+                          "actions": {
+                            "Add_AttachmentLinks_Column_to_View": {
+                              "inputs": {
+                                "body": {
+                                  "body": "{\n  \"strField\":\"AttachmentLinks\"\n}",
+                                  "headers": {
+                                    "accept": "application/json;odata=verbose",
+                                    "content-type": "application/json;odata=verbose"
+                                  },
+                                  "method": "POST",
+                                  "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                                },
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                                  }
+                                },
+                                "method": "post",
+                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                              },
+                              "runAfter": {
+                                "Create_AttachmentLinks_Column_in_Documents": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "type": "ApiConnection"
+                            },
+                            "Create_AttachmentLinks_Column_in_Documents": {
+                              "inputs": {
+                                "body": {
+                                  "body": "{\n  \"__metadata\": { \"type\": \"SP.FieldMultiLineText\" },\n  \"Title\": \"AttachmentLinks\",\n  \"FieldTypeKind\": 3,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false,\n\"RichText\":true\n}",
+                                  "headers": {
+                                    "accept": "application/json;odata=verbose",
+                                    "content-type": "application/json;odata=verbose"
+                                  },
+                                  "method": "POST",
+                                  "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                                },
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                                  }
+                                },
+                                "method": "post",
+                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                              },
+                              "type": "ApiConnection"
+                            }
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "equals": [
+                                  "@length(body('Filter_array_AttachmentLinks_Column'))",
+                                  0
+                                ]
+                              }
+                            ]
+                          },
+                          "runAfter": {
+                            "Filter_array_AttachmentLinks_Column": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@variables('strAttachmentURL')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "For_each_attachment_in_array": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_strArttachmentURL_is_not_null-copy": {
+                      "actions": {
+                        "Filter_array_AttachmentLinks_Column_1": {
+                          "inputs": {
+                            "from": "@body('Get_Field_List_1')['d']['results']",
+                            "where": "@equals(item()['InternalName'], 'AttachmentLinks')"
+                          },
+                          "type": "Query"
+                        },
+                        "If_No_Attament_Links_Column_1": {
+                          "actions": {
+                            "Add_AttachmentLinks_Column_to_View_1": {
+                              "inputs": {
+                                "body": {
+                                  "body": "{\n  \"strField\":\"AttachmentLinks\"\n}",
+                                  "headers": {
+                                    "accept": "application/json;odata=verbose",
+                                    "content-type": "application/json;odata=verbose"
+                                  },
+                                  "method": "POST",
+                                  "uri": "_api/web/lists/getbytitle('Documents')/views/getbytitle('All Documents')/viewfields/addViewField"
+                                },
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                                  }
+                                },
+                                "method": "post",
+                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                              },
+                              "runAfter": {
+                                "Create_AttachmentLinks_Column_in_Documents_1": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "type": "ApiConnection"
+                            },
+                            "Create_AttachmentLinks_Column_in_Documents_1": {
+                              "inputs": {
+                                "body": {
+                                  "body": "{\n  \"__metadata\": { \"type\": \"SP.FieldMultiLineText\" },\n  \"Title\": \"AttachmentLinks\",\n  \"FieldTypeKind\": 3,\n  \"Required\": false,\n  \"EnforceUniqueValues\": false,\n\"RichText\":true\n}",
+                                  "headers": {
+                                    "accept": "application/json;odata=verbose",
+                                    "content-type": "application/json;odata=verbose"
+                                  },
+                                  "method": "POST",
+                                  "uri": "_api/web/lists/getbytitle('Documents')/fields"
+                                },
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline-3']['connectionId']"
+                                  }
+                                },
+                                "method": "post",
+                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/httprequest"
+                              },
+                              "type": "ApiConnection"
+                            }
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "equals": [
+                                  "@length(body('Filter_array_AttachmentLinks_Column_1'))",
+                                  0
+                                ]
+                              }
+                            ]
+                          },
+                          "runAfter": {
+                            "Filter_array_AttachmentLinks_Column_1": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "If"
+                        },
+                        "Update_item_Attachment-copy": {
+                          "inputs": {
+                            "body": {
+                              "AttachmentLinks": "@{variables('strAttachmentURL')}"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                              }
+                            },
+                            "method": "patch",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/tables/@{encodeURIComponent(encodeURIComponent('Documents'))}/items/@{encodeURIComponent(body('Create_Email_File')?['ItemId'])}"
+                          },
+                          "runAfter": {
+                            "If_No_Attament_Links_Column_1": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@variables('strAttachmentURL')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Update_item_Attachment": [
+                          "Failed"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "Join_hub_site": {
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-4']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/joinhubsite",
+                        "queries": {
+                          "hubSiteId": "daeb3e48-0885-4575-8932-0d3b096518fb"
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Field_List": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Send_an_email_New_Site_Created": {
+                      "inputs": {
+                        "body": {
+                          "Body": "<p class=\"editor-paragraph\">New Site Created: @{concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))}</p>",
+                          "Importance": "Normal",
+                          "Subject": "Site Created",
+                          "To": "walterjohnson@jadeskyinnovativesolutions.onmicrosoft.com"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['office365-1']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/v2/Mail"
+                      },
+                      "runAfter": {
+                        "If_strArttachmentURL_is_not_null": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Set_variable_strAttachmentURL_Blank": {
+                      "inputs": {
+                        "name": "strAttachmentURL",
+                        "value": "@null"
+                      },
+                      "runAfter": {
+                        "If_contains_matters_email": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "SetVariable"
+                    },
+                    "Set_variable_strAttachmentURL_Null": {
+                      "inputs": {
+                        "name": "strAttachmentURL",
+                        "value": "@null"
+                      },
+                      "runAfter": {
+                        "Update_item": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "SetVariable"
+                    },
+                    "Terminate_1": {
+                      "inputs": {
+                        "runStatus": "Succeeded"
+                      },
+                      "runAfter": {
+                        "Create_Microsoft_365_Group": [
+                          "Failed"
+                        ]
+                      },
+                      "type": "Terminate"
+                    },
+                    "Terminate_End": {
+                      "inputs": {
+                        "runStatus": "Succeeded"
+                      },
+                      "runAfter": {
+                        "Update_item_1": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "Terminate"
+                    },
+                    "Terminate_End_Success": {
+                      "inputs": {
+                        "runStatus": "Succeeded"
+                      },
+                      "runAfter": {
+                        "If_strArttachmentURL_is_not_null-copy": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Terminate"
+                    },
+                    "Update_item": {
+                      "inputs": {
+                        "body": {
+                          "EmailCreated": "@{utcNow()}",
+                          "From": "@{outputs('Get_Email_From')}",
+                          "HasAttachments": "@{outputs('Get_Email_Has_Attachments')}",
+                          "Subject": "@{outputs('Get_Email_Subject')}",
+                          "Title": "@{outputs('Get_Email_Subject')}  @{utcNow()}",
+                          "To": "@{outputs('Get_Email_To')}"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                          }
+                        },
+                        "method": "patch",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/tables/@{encodeURIComponent(encodeURIComponent('Documents'))}/items/@{encodeURIComponent(body('Create_Email_File')?['ItemId'])}"
+                      },
+                      "runAfter": {
+                        "Create_blob_1": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Update_item_1": {
+                      "inputs": {
+                        "body": {
+                          "AttachmentLinks": "@{variables('strAttachmentURL')}",
+                          "EmailCreated": "@{utcNow()}",
+                          "From": "@{outputs('Get_Email_From')}",
+                          "HasAttachments": "@{outputs('Get_Email_Has_Attachments')}",
+                          "Subject": "@{outputs('Get_Email_Subject')}",
+                          "Title": "@{outputs('Get_Email_Subject')}  @{utcNow()}",
+                          "To": "@{outputs('Get_Email_To')}"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                          }
+                        },
+                        "method": "patch",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/tables/@{encodeURIComponent(encodeURIComponent('Documents'))}/items/@{encodeURIComponent(body('Create_file_New_Site')?['ItemId'])}"
+                      },
+                      "runAfter": {
+                        "Create_blob": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "Update_item_Attachment": {
+                      "inputs": {
+                        "body": {
+                          "AttachmentLinks": "@{variables('strAttachmentURL')}"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline-1']['connectionId']"
+                          }
+                        },
+                        "method": "patch",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent(concat('https://reiszsidermaneisenberg.sharepoint.com/sites/',replace(variables('strFoundMatter'),'.',''))))}/tables/@{encodeURIComponent(encodeURIComponent('Documents'))}/items/@{encodeURIComponent(body('Create_Email_File')?['ItemId'])}"
+                      },
+                      "runAfter": {
+                        "For_each_Attachment_1": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ApiConnection"
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@variables('blnFoundItem')",
+                          "@true"
+                        ]
+                      },
+                      {
+                        "not": {
+                          "contains": [
+                            "@toUpper(outputs('Get_Email_From'))",
+                            "CALENDAR"
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "contains": [
+                            "@toUpper(outputs('Get_Email_To'))",
+                            "CALENDAR"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "runAfter": {
+                    "If_Subject_has_Reg_Ex_Match": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "If"
+                },
+                "If_Subject_has_Reg_Ex_Match": {
+                  "actions": {
+                    "Get_items_In_LookUp_List": {
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                          }
+                        },
+                        "method": "get",
+                        "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
+                        "queries": {
+                          "$filter": "RSEFileNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or CaseNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or ClaimNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}'"
+                        }
+                      },
+                      "type": "ApiConnection"
+                    },
+                    "If_Found_Item_in_List": {
+                      "actions": {
+                        "Set_variable_blnFoundItem": {
+                          "inputs": {
+                            "name": "blnFoundItem",
+                            "value": true
+                          },
+                          "metadata": {
+                            "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+                          },
+                          "type": "SetVariable"
+                        },
+                        "Set_variable_strFoundMatter": {
+                          "inputs": {
+                            "name": "strFoundMatter",
+                            "value": "@outputs('Get_items_In_LookUp_List')?['body/value'][0]?['RSEFileNo']"
+                          },
+                          "metadata": {
+                            "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+                          },
+                          "runAfter": {
+                            "Set_variable_blnFoundItem": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "SetVariable"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
+                                0
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Get_items_In_LookUp_List": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "For_each_Subject_Word": {
+                        "actions": {
+                          "If_blnKeepProcessing": {
+                            "actions": {
+                              "Get_items_In_LookUp_List_By_Subject_Word": {
+                                "inputs": {
+                                  "host": {
+                                    "connection": {
+                                      "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                    }
+                                  },
+                                  "method": "get",
+                                  "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
+                                  "queries": {
+                                    "$filter": "RSEFileNo eq '@{items('For_each_Subject_Word')}' or CaseNo eq '@{items('For_each_Subject_Word')}' or ClaimNo eq '@{items('For_each_Subject_Word')}'"
+                                  }
+                                },
+                                "type": "ApiConnection"
+                              },
+                              "If_Item_Found_In_List_and_blnKeepProcessing": {
+                                "actions": {
+                                  "Set_variable_blnFoundItem_1": {
+                                    "inputs": {
+                                      "name": "blnFoundItem",
+                                      "value": true
+                                    },
+                                    "metadata": {
+                                      "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+                                    },
+                                    "type": "SetVariable"
+                                  },
+                                  "Set_variable_blnKeepProcessing_False": {
+                                    "inputs": {
+                                      "name": "blnKeepProcessing",
+                                      "value": false
+                                    },
+                                    "runAfter": {
+                                      "Set_variable_strFoundMatter_1": [
+                                        "Succeeded"
+                                      ]
+                                    },
+                                    "type": "SetVariable"
+                                  },
+                                  "Set_variable_strFoundMatter_1": {
+                                    "inputs": {
+                                      "name": "strFoundMatter",
+                                      "value": "@outputs('Get_items_In_LookUp_List_By_Subject_Word')?['body/value'][0]?['RSEFileNo']"
+                                    },
+                                    "metadata": {
+                                      "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+                                    },
+                                    "runAfter": {
+                                      "Set_variable_blnFoundItem_1": [
+                                        "Succeeded"
+                                      ]
+                                    },
+                                    "type": "SetVariable"
+                                  }
+                                },
+                                "else": {
+                                  "actions": {}
+                                },
+                                "expression": {
+                                  "and": [
+                                    {
+                                      "not": {
+                                        "equals": [
+                                          "@length(body('Get_items_In_LookUp_List_By_Subject_Word')?['value'])",
+                                          0
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "equals": [
+                                        "@variables('blnKeepProcessing')",
+                                        "@true"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "runAfter": {
+                                  "Get_items_In_LookUp_List_By_Subject_Word": [
+                                    "Succeeded"
+                                  ]
+                                },
+                                "type": "If"
+                              }
+                            },
+                            "else": {
+                              "actions": {}
+                            },
+                            "expression": {
+                              "and": [
+                                {
+                                  "equals": [
+                                    "@variables('blnKeepProcessing')",
+                                    "@true"
+                                  ]
+                                }
+                              ]
+                            },
+                            "type": "If"
+                          }
+                        },
+                        "foreach": "@outputs('Split_Subject_into_array')",
+                        "runAfter": {
+                          "Set_variable_blnKeepProcessing": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "Foreach"
+                      },
+                      "Set_variable_blnKeepProcessing": {
+                        "inputs": {
+                          "name": "blnKeepProcessing",
+                          "value": true
+                        },
+                        "runAfter": {
+                          "Split_Subject_into_array": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "SetVariable"
+                      },
+                      "Split_Subject_into_array": {
+                        "inputs": "@split(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(\noutputs('Get_Email_Subject')  ,\n  '!', ' '), '\"', ' '), '#', ' '), '$', ' '), '%', ' '), '&', ' '), '''', ' '), '(', ' '), ')', ' '), '*', ' '), '+', ' '), ',', ' '), '/', ' '), ':', ' '), ';', ' '), '<', ' '), '=', ' '), '>', ' '), '?', ' '), '@', ' '), '[', ' '), '\\', ' '), ']', ' '), '^', ' '), '_', ' '), '`', ' '), '{', ' '), '|', ' '), '}', ' '), '~', ' '),\n  '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),' ')",
+                        "type": "Compose"
+                      }
+                    }
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "not": {
+                          "equals": [
+                            "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                            ""
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "equals": [
+                            "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                            "@null"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "runAfter": {
+                    "Get_Reg_Ex_Match_All_Subject": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "If"
+                }
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@empty(outputs('Get_Email_Subject'))",
+                      "@false"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "equals": [
+                        "@outputs('Get_Email_Subject')",
+                        "@null"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "runAfter": {
+                "If_Has_Attachments": [
+                  "Succeeded",
+                  "Failed"
+                ]
+              },
+              "type": "If"
+            },
+            "Terminate": {
+              "inputs": {
+                "runStatus": "Succeeded"
+              },
+              "runAfter": {
+                "Compose_Error_Get_Email_via_User_ID": [
+                  "Succeeded",
+                  "Failed"
+                ]
+              },
+              "type": "Terminate"
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "expression": {
+            "and": [
+              {
+                "not": {
+                  "equals": [
+                    "@outputs('Get_OData_ID')",
+                    ""
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "equals": [
+                    "@outputs('Get_OData_ID')",
+                    "@null"
+                  ]
+                }
+              }
+            ]
+          },
+          "runAfter": {
+            "Get_OData_ID": [
+              "Succeeded"
+            ]
+          },
+          "type": "If"
+        },
+        "Initialize_variables": {
+          "inputs": {
+            "variables": [
+              {
+                "name": "strRecipients",
+                "type": "string"
+              },
+              {
+                "name": "blnFoundItem",
+                "type": "boolean",
+                "value": false
+              },
+              {
+                "name": "strFoundMatter",
+                "type": "string"
+              },
+              {
+                "name": "arrAttachments",
+                "type": "array"
+              },
+              {
+                "name": "strAttachmentURL",
+                "type": "string"
+              },
+              {
+                "name": "blnKeepProcessing",
+                "type": "boolean",
+                "value": true
+              },
+              {
+                "name": "strCC",
+                "type": "string"
+              }
+            ]
+          },
+          "runAfter": {},
+          "type": "InitializeVariable"
+        },
+        "Parse_JSON": {
+          "inputs": {
+            "content": "@outputs('Get_Message_JSON')",
+            "schema": {
+              "properties": {
+                "data": {
+                  "properties": {
+                    "ChangeType": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "Resource": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "ResourceData": {
+                      "properties": {
+                        "@@odata.etag": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "@@odata.id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "@@odata.type": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "Id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "SubscriptionExpirationDateTime": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "SubscriptionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "clientState": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "tenantId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "datacontenttype": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "specversion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "time": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            }
+          },
+          "runAfter": {
+            "Get_Message_JSON": [
+              "Succeeded"
+            ]
+          },
+          "type": "ParseJson"
+        }
+      },
+      "contentVersion": "1.0.0.0",
+      "metadata": {
+        "notes": {}
+      },
+      "outputs": {},
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "When_a_message_is_received_in_a_queue_(auto-complete)": {
+          "evaluatedRecurrence": {
+            "frequency": "Minute",
+            "interval": 3
+          },
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['servicebus']['connectionId']"
+              }
+            },
+            "method": "get",
+            "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/head",
+            "queries": {
+              "queueType": "Main"
+            }
+          },
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 3
+          },
+          "type": "ApiConnection"
+        }
+      }
+    },
+    "endpointsConfiguration": {
+      "connector": {
+        "outgoingIpAddresses": [
+          {
+            "address": "40.71.249.139"
+          },
+          {
+            "address": "40.71.249.205"
+          },
+          {
+            "address": "40.114.40.132"
+          },
+          {
+            "address": "40.71.11.80/28"
+          },
+          {
+            "address": "40.71.15.160/27"
+          },
+          {
+            "address": "52.188.157.160"
+          },
+          {
+            "address": "20.88.153.176/28"
+          },
+          {
+            "address": "20.88.153.192/27"
+          },
+          {
+            "address": "52.151.221.184"
+          },
+          {
+            "address": "52.151.221.119"
+          }
+        ]
+      },
+      "workflow": {
+        "accessEndpointIpAddresses": [
+          {
+            "address": "4.156.26.80"
+          },
+          {
+            "address": "4.156.25.14"
+          },
+          {
+            "address": "4.156.25.189"
+          },
+          {
+            "address": "20.242.168.44"
+          },
+          {
+            "address": "4.156.241.183"
+          },
+          {
+            "address": "4.156.243.174"
+          },
+          {
+            "address": "4.156.242.86"
+          },
+          {
+            "address": "4.156.243.165"
+          },
+          {
+            "address": "52.224.145.162"
+          },
+          {
+            "address": "4.156.242.96"
+          },
+          {
+            "address": "4.156.243.173"
+          },
+          {
+            "address": "4.156.241.195"
+          },
+          {
+            "address": "4.156.242.97"
+          },
+          {
+            "address": "4.156.242.26"
+          },
+          {
+            "address": "4.156.242.13"
+          },
+          {
+            "address": "172.212.37.35"
+          }
+        ],
+        "outgoingIpAddresses": [
+          {
+            "address": "52.226.216.187"
+          },
+          {
+            "address": "40.76.148.50"
+          },
+          {
+            "address": "20.84.29.18"
+          },
+          {
+            "address": "40.76.174.39"
+          },
+          {
+            "address": "4.156.27.7"
+          },
+          {
+            "address": "4.156.28.117"
+          },
+          {
+            "address": "4.156.25.188"
+          },
+          {
+            "address": "20.242.168.24"
+          },
+          {
+            "address": "4.156.241.165"
+          },
+          {
+            "address": "4.156.243.170"
+          },
+          {
+            "address": "4.156.242.49"
+          },
+          {
+            "address": "4.156.243.164"
+          },
+          {
+            "address": "52.224.145.30"
+          },
+          {
+            "address": "4.156.242.92"
+          },
+          {
+            "address": "4.156.243.172"
+          },
+          {
+            "address": "4.156.241.191"
+          },
+          {
+            "address": "4.156.241.47"
+          },
+          {
+            "address": "4.156.241.229"
+          },
+          {
+            "address": "4.156.242.12"
+          },
+          {
+            "address": "172.212.32.196"
+          }
+        ]
+      }
+    },
+    "parameters": {
+      "$connections": {
+        "value": {
+          "azureblob-1": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/azureblob-1",
+            "connectionName": "azureblob-1",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/azureblob"
+          },
+          "office365-1": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/office365",
+            "connectionName": "office365",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/office365"
+          },
+          "servicebus": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/servicebus",
+            "connectionName": "servicebus",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/servicebus"
+          },
+          "sharepointonline": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          },
+          "sharepointonline-1": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          },
+          "sharepointonline-2": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          },
+          "sharepointonline-3": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          },
+          "sharepointonline-4": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          },
+          "sharepointonline-5": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          }
+        }
+      }
+    },
+    "provisioningState": "Succeeded",
+    "state": "Disabled",
+    "version": "08584153822694023305"
+  },
+  "tags": {},
+  "type": "Microsoft.Logic/workflows"
+}
