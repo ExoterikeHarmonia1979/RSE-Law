@@ -24,6 +24,18 @@ function loadListWidth(): number {
   return isNaN(n) ? LIST_WIDTH_DEFAULT : n;
 }
 
+/** Skip-based paging can return a document again when the index changes
+ * between pages (e.g. during a reindex); keep only the first occurrence so
+ * a row and its selection highlight can never appear twice. */
+function dedupeByPath(items: IEmailItem[]): IEmailItem[] {
+  const seen: { [path: string]: boolean } = {};
+  return items.filter((item) => {
+    if (seen[item.storagePath]) { return false; }
+    seen[item.storagePath] = true;
+    return true;
+  });
+}
+
 /** Newest first; undated items sink to the bottom. Guarantees the visible
  * order always matches the displayed dates and group headers. */
 function sortByDateDesc(items: IEmailItem[]): IEmailItem[] {
@@ -110,7 +122,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       .then((page) => {
         if (seq !== searchSeq.current) { return; } // superseded by a newer search
         setItems((prev) => {
-          const merged = append ? prev.concat(page.items) : page.items;
+          const merged = dedupeByPath(append ? prev.concat(page.items) : page.items);
           return byDate ? sortByDateDesc(merged) : merged;
         });
         setTotalCount(page.totalCount);
