@@ -291,6 +291,14 @@ $def.actions = @{
           queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
         }
       }
+      # A vanished message is the expected case, not a fault. Without this the run
+      # reports Failed and the failure rate stops being a usable health signal;
+      # the 404 itself stays visible in this run's action history.
+      Terminate_Stale_Handled = @{
+        type = 'Terminate'
+        runAfter = @{ Complete_Stale_Notification = @('Succeeded') }
+        inputs = @{ runStatus = 'Succeeded' }
+      }
     }
     else = @{ actions = @{
       Abandon_the_message_in_a_queue = @{

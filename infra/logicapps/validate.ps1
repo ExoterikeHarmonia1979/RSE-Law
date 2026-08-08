@@ -134,7 +134,13 @@ foreach($k in @('Complete_the_message_in_a_queue','Abandon_the_message_in_a_queu
 }
 $terms = $all.Keys | Where-Object { $all[$_].type -eq 'Terminate' }
 Write-Host "  Terminate actions: $($terms -join ', ')"
-foreach($t in $terms){ if($t -ne 'Terminate_Failed'){ Bad "Terminate '$t' would bypass Complete/Abandon" } }
+foreach($t in $terms){ if($t -notin @('Terminate_Failed','Terminate_Stale_Handled')){ Bad "Terminate '$t' would bypass Complete/Abandon" } }
+# every Terminate must come after the message has been dealt with
+foreach($t in $terms){
+  $pre = @($all[$t].runAfter.PSObject.Properties.Name)
+  if(-not ($pre | Where-Object { $_ -match 'Complete|Abandon' })){ Bad "Terminate '$t' does not follow a Complete/Abandon" }
+  else { Ok "Terminate $t follows $($pre -join ',')" }
+}
 if($raw -match 'client_secret=[A-Za-z0-9~._-]{8,}'){ Bad "literal client secret present" } else { Ok "no literal client secret" }
 $graphMI = $all.Keys | Where-Object { $all[$_].type -eq 'Http' -and $all[$_].inputs.uri -match 'graph\.microsoft\.com' }
 foreach($g in $graphMI){
