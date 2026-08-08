@@ -1,0 +1,280 @@
+#requires -Version 7
+# Transform HTTP-Matter-On-Email-Receipt: remove SharePoint site/library work,
+# keep blob archiving + matter lookups, fix correctness bugs, add peek-lock durability.
+param(
+  [string]$InPath  = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.before.json",
+  [string]$OutPath = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.after.json"
+)
+$ErrorActionPreference = 'Stop'
+
+$res = Get-Content $InPath -Raw | ConvertFrom-Json -AsHashtable
+$def = $res.properties.definition
+$Q   = "'speventgridqueue'"
+$SB  = @{ connection = @{ name = '@parameters(''$connections'')[''servicebus''][''connectionId'']' } }
+$BLOB= @{ connection = @{ name = '@parameters(''$connections'')[''azureblob-1''][''connectionId'']' } }
+$SP  = @{ connection = @{ name = '@parameters(''$connections'')[''sharepointonline''][''connectionId'']' } }
+
+function San([string]$expr) {
+  # strip \ / : * ? " < > | -> _   (same chain Create_blob_1 already used)
+  $c = $expr
+  foreach ($ch in @('\','/',':','*','?','"','<','>','|')) { $c = "replace($c, '$ch', '_')" }
+  $c
+}
+
+# ---------------------------------------------------------------- 1. TRIGGER
+$def.triggers = @{
+  'When_a_message_is_received_in_a_queue_(peek-lock)' = @{
+    type       = 'ApiConnection'
+    recurrence = @{ frequency = 'Minute'; interval = 1 }
+    runtimeConfiguration = @{ concurrency = @{ runs = 25 } }
+    inputs     = @{
+      host    = $SB
+      method  = 'get'
+      path    = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/head/peek"
+      queries = @{ queueType = 'Main' }
+    }
+  }
+}
+
+# ------------------------------------------------- 2. INNER: blob-only branch
+$root = $def.actions
+$odata = $root.If_Odata_ID_is_valid.actions
+$notEmpty = $odata.Not_empty_subject.actions
+$found = $notEmpty.If_BlnFoundItem_and_not_calendar
+
+# calendar guard: coalesce so a null From/To no longer throws InvalidTemplate
+$found.expression = @{
+  and = @(
+    @{ equals = @('@variables(''blnFoundItem'')', '@true') }
+    # guard the blob path: an empty matter would write everything to /matters//Emails/
+    @{ equals = @('@empty(trim(coalesce(variables(''strFoundMatter''),'''')))', '@false') }
+    @{ not = @{ contains = @('@toUpper(coalesce(outputs(''Get_Email_From''),''''))', 'CALENDAR') } }
+    @{ not = @{ contains = @('@toUpper(coalesce(outputs(''Get_Email_To''),''''))',   'CALENDAR') } }
+  )
+}
+
+# Collapse the two duplicate branches (site-exists / new-site) into one blob path.
+# Kept: the sanitised .eml write and the attachment loop. Dropped: their byte-identical twins.
+# cap the stem so a very long subject / attachment name cannot exceed the blob name limit,
+# which would otherwise make that email permanently unarchivable
+function Cap([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, 0, $n), $e)" }
+$emlStem = Cap (San "outputs('Get_Email_Subject')") 180
+$attStem = Cap (San "item()?['Name']") 180
+
+$found.actions = @{
+  Email_Blob_Name = @{
+    type = 'Compose'
+    runAfter = @{}
+    inputs = "@concat($emlStem, '.eml')"
+  }
+  HTTP_Graph_API_Call_to_Get_Email_Message_Value = @{
+    type = 'Http'
+    runAfter = @{ Email_Blob_Name = @('Succeeded') }
+    runtimeConfiguration = @{ contentTransfer = @{ transferMode = 'Chunked' } }
+    inputs = @{
+      method = 'GET'
+      uri    = 'https://graph.microsoft.com/v1.0/@{outputs(''Get_OData_ID'')}/$value'
+      authentication = @{ type = 'ManagedServiceIdentity'; audience = 'https://graph.microsoft.com' }
+    }
+  }
+  Create_blob_1 = @{
+    type = 'ApiConnection'
+    runAfter = @{ HTTP_Graph_API_Call_to_Get_Email_Message_Value = @('Succeeded') }
+    inputs = @{
+      host = $BLOB
+      method = 'post'
+      path = "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
+      body = "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')"
+      queries = @{
+        folderPath = "/matters/@{variables('strFoundMatter')}/Emails/"
+        name       = "@outputs('Email_Blob_Name')"
+        queryParametersSingleEncoded = $true
+      }
+    }
+  }
+  For_each_Attachment_1 = @{
+    type = 'Foreach'
+    foreach = "@variables('arrAttachments')"
+    runAfter = @{ Create_blob_1 = @('Succeeded') }
+    runtimeConfiguration = @{ concurrency = @{ repetitions = 4 } }
+    actions = @{
+      Create_blob_for_Attachment = @{
+        type = 'ApiConnection'
+        runAfter = @{}
+        inputs = @{
+          host = $BLOB
+          method = 'post'
+          path = "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
+          body = "@item()?['Content']"
+          queries = @{
+            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/"
+            name       = "@$attStem"
+            queryParametersSingleEncoded = $true
+          }
+        }
+      }
+    }
+  }
+}
+
+# --------------------------------- 3. matter lookup: one query, deterministic
+$regex = $notEmpty.If_Subject_has_Reg_Ex_Match
+
+# candidate words: drop blanks, dedupe, cap so the OData $filter cannot blow the URL limit
+$words = "@take(union(filter(outputs('Split_Subject_into_array'), not(equals(trim(item()), ''))), createArray()), 20)"
+
+$filterExpr = "@join(select(outputs('Candidate_Subject_Words'), concat(" +
+              "'RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')), ' or ')"
+
+$regex.else = @{ actions = @{
+  Split_Subject_into_array = $regex.else.actions.Split_Subject_into_array
+  Candidate_Subject_Words = @{
+    type = 'Compose'
+    runAfter = @{ Split_Subject_into_array = @('Succeeded') }
+    inputs = $words
+  }
+  Set_variable_blnKeepProcessing = @{
+    type = 'SetVariable'
+    runAfter = @{ Candidate_Subject_Words = @('Succeeded') }
+    inputs = @{ name = 'blnKeepProcessing'; value = '@true' }
+  }
+  If_Any_Candidate_Words = @{
+    type = 'If'
+    runAfter = @{ Set_variable_blnKeepProcessing = @('Succeeded') }
+    expression = @{ and = @(@{ not = @{ equals = @("@length(outputs('Candidate_Subject_Words'))", 0) } }) }
+    actions = @{
+      # ONE SharePoint round trip for the whole subject, replacing one call per word
+      Get_items_In_LookUp_List_By_Subject_Word = @{
+        type = 'ApiConnection'
+        runAfter = @{}
+        inputs = @{
+          host = $SP
+          method = 'get'
+          path = "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items"
+          queries = @{ '$filter' = $filterExpr }
+        }
+      }
+      # sequential, but purely in-memory: first word in SUBJECT order wins => deterministic
+      For_each_Subject_Word = @{
+        type = 'Foreach'
+        foreach = "@outputs('Candidate_Subject_Words')"
+        runAfter = @{ Get_items_In_LookUp_List_By_Subject_Word = @('Succeeded') }
+        runtimeConfiguration = @{ concurrency = @{ repetitions = 1 } }
+        actions = @{
+          If_blnKeepProcessing = @{
+            type = 'If'
+            runAfter = @{}
+            expression = @{ and = @(@{ equals = @("@variables('blnKeepProcessing')", '@true') }) }
+            actions = @{
+              Filter_Rows_Matching_Word = @{
+                type = 'Query'
+                runAfter = @{}
+                inputs = @{
+                  from = "@body('Get_items_In_LookUp_List_By_Subject_Word')?['value']"
+                  where = "@or(or(equals(item()?['RSEFileNo'], items('For_each_Subject_Word')), equals(item()?['CaseNo'], items('For_each_Subject_Word'))), equals(item()?['ClaimNo'], items('For_each_Subject_Word')))"
+                }
+              }
+              If_Item_Found_In_List_and_blnKeepProcessing = @{
+                type = 'If'
+                runAfter = @{ Filter_Rows_Matching_Word = @('Succeeded') }
+                expression = @{ and = @(@{ not = @{ equals = @("@length(body('Filter_Rows_Matching_Word'))", 0) } }) }
+                actions = @{
+                  Set_variable_blnFoundItem_1 = @{
+                    type = 'SetVariable'; runAfter = @{}
+                    inputs = @{ name = 'blnFoundItem'; value = '@true' }
+                  }
+                  Set_variable_strFoundMatter_1 = @{
+                    type = 'SetVariable'
+                    runAfter = @{ Set_variable_blnFoundItem_1 = @('Succeeded') }
+                    inputs = @{ name = 'strFoundMatter'; value = "@first(body('Filter_Rows_Matching_Word'))?['RSEFileNo']" }
+                  }
+                  Set_variable_blnKeepProcessing_False = @{
+                    type = 'SetVariable'
+                    runAfter = @{ Set_variable_strFoundMatter_1 = @('Succeeded') }
+                    inputs = @{ name = 'blnKeepProcessing'; value = '@false' }
+                  }
+                }
+                else = @{ actions = @{} }
+              }
+            }
+            else = @{ actions = @{} }
+          }
+        }
+      }
+    }
+    else = @{ actions = @{} }
+  }
+} }
+
+# ------------------------------- 4. serialise appends that race on a variable
+$odata.For_each_Recipient.runtimeConfiguration = @{ concurrency = @{ repetitions = 1 } }
+$odata.For_each_CC.runtimeConfiguration        = @{ concurrency = @{ repetitions = 1 } }
+$odata.If_Has_Attachments.actions.For_each_Attachment.runtimeConfiguration = @{ concurrency = @{ repetitions = 1 } }
+
+# ---------------------------------------- 5. Graph calls -> managed identity
+$mi = @{ type = 'ManagedServiceIdentity'; audience = 'https://graph.microsoft.com' }
+function Use-MI($a) { if ($a) { $a.inputs.Remove('headers') | Out-Null; $a.inputs.authentication = $mi } }
+Use-MI $odata.HTTP_Graph_API_Call_to_Get_Email_Message_via_User
+Use-MI $odata.If_Has_Attachments.actions.HTTP_Graph_API_Call_to_Get_Email_Message_Attachments
+Use-MI $odata.If_Has_Attachments.actions.For_each_Attachment.actions.HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content
+
+# drop the swallow-the-error terminate so a Graph failure fails the run (and abandons the message)
+$odata.Remove('Compose_Error_Get_Email_via_User_ID') | Out-Null
+$odata.Remove('Terminate') | Out-Null
+
+# ------------------------- 6. wrap in a scope; complete / abandon the message
+$init = $root.Initialize_variables
+$init.inputs.variables = @($init.inputs.variables | Where-Object { $_.name -ne 'strAttachmentURL' })
+
+$scopeActions = @{
+  Get_Message_JSON = $root.Get_Message_JSON
+  Parse_JSON       = $root.Parse_JSON
+  Get_Message_ID   = $root.Get_Message_ID
+  Get_OData_ID     = $root.Get_OData_ID
+  If_Odata_ID_is_valid = $root.If_Odata_ID_is_valid
+}
+$scopeActions.Get_Message_JSON.runAfter = @{}
+$scopeActions.Get_Message_ID.runAfter   = @{ Parse_JSON = @('Succeeded') }
+
+$def.actions = @{
+  Initialize_variables = $init
+  Process_Message = @{
+    type = 'Scope'
+    runAfter = @{ Initialize_variables = @('Succeeded') }
+    actions = $scopeActions
+  }
+  Complete_the_message_in_a_queue = @{
+    type = 'ApiConnection'
+    runAfter = @{ Process_Message = @('Succeeded') }
+    inputs = @{
+      host = $SB
+      method = 'delete'
+      path = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/complete"
+      queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
+    }
+  }
+  Abandon_the_message_in_a_queue = @{
+    type = 'ApiConnection'
+    runAfter = @{ Process_Message = @('Failed','TimedOut','Skipped') }
+    inputs = @{
+      host = $SB
+      method = 'post'
+      path = "/@{encodeURIComponent(encodeURIComponent($Q))}/messages/abandon"
+      queries = @{ lockToken = "@triggerBody()?['LockToken']"; queueType = 'Main' }
+    }
+  }
+  Terminate_Failed = @{
+    type = 'Terminate'
+    runAfter = @{ Abandon_the_message_in_a_queue = @('Succeeded','Failed','Skipped','TimedOut') }
+    inputs = @{ runStatus = 'Failed'; runError = @{ code = 'ProcessingFailed'; message = 'Message processing failed; message abandoned for redelivery.' } }
+  }
+}
+
+# ------------------------------------------------- 7. prune dead connections
+$keep = @('servicebus','azureblob-1','sharepointonline')
+$conns = $res.properties.parameters.'$connections'.value
+foreach ($n in @($conns.Keys)) { if ($n -notin $keep) { $conns.Remove($n) | Out-Null } }
+
+# emit definition-only payload for PUT
+$res | ConvertTo-Json -Depth 100 | Set-Content $OutPath -Encoding utf8
+Write-Host "wrote $OutPath"
