@@ -8,6 +8,22 @@ import { EmailList } from './EmailList';
 import { ReadingPane } from './ReadingPane';
 import styles from './OutlookSearch.module.scss';
 
+const LIST_WIDTH_KEY = 'rse-outlookSearch-listWidth';
+const LIST_WIDTH_DEFAULT = 360;
+const LIST_WIDTH_MIN = 260;
+const READING_WIDTH_MIN = 320;
+
+function clampWidth(w: number, containerWidth: number): number {
+  const max = Math.max(LIST_WIDTH_MIN, containerWidth - READING_WIDTH_MIN);
+  return Math.min(Math.max(w, LIST_WIDTH_MIN), max);
+}
+
+function loadListWidth(): number {
+  const raw = window.localStorage.getItem(LIST_WIDTH_KEY);
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return isNaN(n) ? LIST_WIDTH_DEFAULT : n;
+}
+
 const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize } = props;
 
@@ -35,6 +51,46 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const [contentError, setContentError] = React.useState<string | undefined>(undefined);
 
   const searchSeq = React.useRef(0);
+
+  // ── Adjustable split between list and reading pane ──
+  const [listWidth, setListWidth] = React.useState<number>(loadListWidth);
+  const panesRef = React.useRef<HTMLDivElement>(null);
+  const draggingRef = React.useRef(false);
+
+  const saveListWidth = React.useCallback((w: number): void => {
+    try { window.localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(w))); } catch { /* ignore */ }
+  }, []);
+
+  const onSplitterPointerDown = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, []);
+
+  const onSplitterPointerMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!draggingRef.current || !panesRef.current) { return; }
+    const rect = panesRef.current.getBoundingClientRect();
+    setListWidth(clampWidth(e.clientX - rect.left, rect.width));
+  }, []);
+
+  const onSplitterPointerUp = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!draggingRef.current) { return; }
+    draggingRef.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setListWidth((w) => { saveListWidth(w); return w; });
+  }, [saveListWidth]);
+
+  const onSplitterKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
+    e.preventDefault();
+    const delta = e.key === 'ArrowLeft' ? -16 : 16;
+    const containerWidth = panesRef.current ? panesRef.current.getBoundingClientRect().width : 1200;
+    setListWidth((w) => {
+      const next = clampWidth(w + delta, containerWidth);
+      saveListWidth(next);
+      return next;
+    });
+  }, [saveListWidth]);
 
   const runSearch = React.useCallback((q: string, skip: number, byDate: boolean, append: boolean): void => {
     const seq = ++searchSeq.current;
@@ -116,7 +172,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
         </MessageBar>
       )}
 
-      <div className={styles.panes}>
+      <div className={styles.panes} ref={panesRef} style={{ display: 'flex', flexDirection: 'row' }}>
         <EmailList
           items={items}
           totalCount={totalCount}
@@ -124,9 +180,21 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
           loading={listLoading}
           orderByDate={orderByDate}
           hasMore={items.length < totalCount}
+          width={listWidth}
           onSelect={handleSelect}
           onToggleSort={handleToggleSort}
           onLoadMore={handleLoadMore}
+        />
+        <div
+          className={styles.splitter}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize message list"
+          tabIndex={0}
+          onPointerDown={onSplitterPointerDown}
+          onPointerMove={onSplitterPointerMove}
+          onPointerUp={onSplitterPointerUp}
+          onKeyDown={onSplitterKeyDown}
         />
         <ReadingPane
           item={selected}

@@ -10,6 +10,8 @@ export interface IEmailListProps {
   loading: boolean;
   orderByDate: boolean;
   hasMore: boolean;
+  /** Pane width in px — controlled by the splitter in OutlookSearch. */
+  width: number;
   onSelect: (item: IEmailItem) => void;
   onToggleSort: () => void;
   onLoadMore: () => void;
@@ -54,13 +56,13 @@ function dateGroup(iso: string): string {
 export const EmailList: React.FC<IEmailListProps> = (props) => {
   const {
     items, totalCount, selectedPath, loading, orderByDate,
-    hasMore, onSelect, onToggleSort, onLoadMore
+    hasMore, width, onSelect, onToggleSort, onLoadMore
   } = props;
 
   let lastGroup: string | undefined;
 
   return (
-    <div className={styles.listPane}>
+    <div className={styles.listPane} style={{ flex: `0 0 ${width}px`, width: `${width}px` }}>
       <div className={styles.listHeader}>
         <span className={styles.listTitle}>
           Results{totalCount > 0 ? ` (${totalCount.toLocaleString()})` : ''}

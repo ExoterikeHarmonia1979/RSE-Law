@@ -3,23 +3,23 @@
   "solution": {
     "name": "outlook-search-spfx-client-side-solution",
     "id": "88d5b16c-c3be-4622-b033-2f74450c0369",
-    "version": "1.0.0.0",
+    "version": "1.0.2.0",
     "includeClientSideAssets": true,
     "skipFeatureDeployment": true,
     "isDomainIsolated": false,
     "developer": {
-      "name": "",
-      "websiteUrl": "",
+      "name": "Reisz Siderman Eisenberg",
+      "websiteUrl": "https://reiszsidermaneisenberg.sharepoint.com",
       "privacyUrl": "",
       "termsOfUseUrl": "",
       "mpnId": "Undefined-1.23.2"
     },
     "metadata": {
       "shortDescription": {
-        "default": "outlook-search-spfx description"
+        "default": "Outlook-style search over the firm's email archive in Azure AI Search."
       },
       "longDescription": {
-        "default": "outlook-search-spfx description"
+        "default": "Three-pane Outlook-style web part: search bar with type-ahead and Outlook query syntax (from:, to:, subject:, before:, after:, hasattachment:), a date-grouped message list, and a reading pane showing the extracted text of each .eml and its attachments. Backed by the matters-eml-index on the rse-matterssearch Azure AI Search service over the samatters/matters blob container."
       },
       "screenshotPaths": [],
       "videoUrl": "",

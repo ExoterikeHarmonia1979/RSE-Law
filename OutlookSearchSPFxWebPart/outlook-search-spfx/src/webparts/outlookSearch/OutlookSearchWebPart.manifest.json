@@ -18,11 +18,16 @@
   "preconfiguredEntries": [{
     "groupId": "5c03119e-3074-46fd-976b-c60198311f70", // Advanced
     "group": { "default": "Advanced" },
-    "title": { "default": "OutlookSearch" },
-    "description": { "default": "Outlook-style search over EML archive in Azure AI Search" },
-    "officeFabricIconFontName": "Page",
+    "title": { "default": "Email Archive Search" },
+    "description": { "default": "Outlook-style search over the .eml archive in Azure AI Search" },
+    "officeFabricIconFontName": "OutlookLogo",
     "properties": {
-      "description": "OutlookSearch"
+      "searchServiceUrl": "https://rse-matterssearch.search.windows.net",
+      "indexName": "matters-eml-index",
+      "apiKey": "",
+      "apiVersion": "2024-07-01",
+      "suggesterName": "sg",
+      "pageSize": 25
     }
   }]
 }

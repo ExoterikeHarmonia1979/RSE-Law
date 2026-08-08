@@ -109,11 +109,29 @@ $text-secondary: #616161;
 /* ── Left: message list ──────────────────────────────────── */
 
 .listPane {
-  flex: 0 0 360px;
+  flex: 0 0 360px; /* actual width comes from the splitter via inline style */
   display: flex;
   flex-direction: column;
-  border-right: 1px solid $border;
   min-height: 0;
+  min-width: 0;
+}
+
+.splitter {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(to right, transparent 2px, $border 2px, $border 3px, transparent 3px);
+
+  &:hover,
+  &:active {
+    background: $outlook-blue;
+    opacity: 0.5;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $outlook-blue;
+    outline-offset: -2px;
+  }
 }
 
 .listHeader {
