@@ -18,8 +18,10 @@ The definition is source of truth here, not the portal. 57 actions with a hand-w
 `runAfter` graph is not a point-and-click change.
 
 ```powershell
-./transform.ps1     # before.json -> after.json
-./validate.ps1      # must print ALL CHECKS PASSED before deploying
+./transform.ps1              # before.json -> after.json
+./validate.ps1               # must print ALL CHECKS PASSED before deploying
+./deploy.ps1                 # dry run: reports drift and what would change
+./deploy.ps1 -Execute        # PUT, refusing if live has drifted
 ```
 
 `validate.ps1` is not decoration. It catches the mistakes that are invisible in the designer
@@ -33,7 +35,23 @@ and only surface in production:
 - a `Terminate` that does not follow a Complete/Abandon, which would end a run with the
   message still locked
 
-Deploy with a PUT that includes `identity` — omitting it strips the managed identity.
+Deploy with `deploy.ps1`, not a hand-rolled PUT. A PUT is a full replace, and two ways of
+losing work are easy to hit by hand:
+
+- **omitting `identity` strips the managed identity** every Graph call authenticates with
+- **`before.json` is a one-time snapshot.** Anything changed directly on the live workflow and
+  not mirrored into `transform.ps1` is silently reverted by the next deploy. This is not
+  hypothetical: the trigger concurrency was 100 live and 40 in the repo, and a redeploy would
+  have quietly halved throughput with nothing in the output to say so.
+
+`deploy.ps1` handles the first and detects the second. It keeps `deployed.json` — the definition
+as the tooling last PUT it — and compares live against *that*, not against the new definition
+(every intentional change is also a difference, so comparing forwards detects nothing). If live
+has moved out from under the baseline it names the paths and refuses, until you either mirror
+the change into `transform.ps1` or pass `-AcceptDrift` to discard it.
+
+`deployed.json` is committed on purpose. It is shared state: a baseline only anyone's local
+machine knows about cannot tell you that someone else edited the portal.
 
 ## What it does
 
