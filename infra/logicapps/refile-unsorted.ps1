@@ -23,6 +23,12 @@ param(
   [string]$SourcePrefix = 'UnsortedMatterCommunication/Emails/'
 )
 $ErrorActionPreference = 'Stop'
+# Known limitation: az warns "Unable to encode the output with cp1252 encoding.
+# Unsupported characters are discarded" and mangles blob names containing emoji,
+# curly quotes or CJK - 5 of 2380 when last measured. The loss happens inside az
+# before the output reaches PowerShell, so neither [Console]::OutputEncoding nor
+# PYTHONIOENCODING helps; only listing over the REST API would. Those blobs fail
+# safe: the copy 404s and is counted as failed, with the source left in place.
 $az  = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $key = (Get-Content "$env:TEMP\sakey.txt" -Raw).Trim()
 $fn  = 'https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc'
@@ -33,8 +39,11 @@ $sas = (& $az storage container generate-sas --account-name $Account --account-k
           --name $Container --permissions racwd --expiry $expiry -o tsv).Trim()
 if (-not $sas) { throw 'could not mint a container SAS' }
 
+# '*' means every page. A literal cap silently truncates the listing, so blobs past
+# the cap would never be seen however often this is re-run - and the sweep keeps
+# adding to this prefix, so the bucket does cross 5000.
 $blobs = & $az storage blob list --account-name $Account --account-key $key -c $Container `
-            --prefix $SourcePrefix --num-results 5000 -o json | ConvertFrom-Json
+            --prefix $SourcePrefix --num-results '*' -o json | ConvertFrom-Json
 # top-level .eml only - never the Attachments/ subfolder
 $emls = @($blobs | Where-Object {
   $_.name -like '*.eml' -and ($_.name -replace [regex]::Escape($SourcePrefix), '') -notlike '*/*'
