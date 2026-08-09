@@ -17,6 +17,30 @@ public class RegExMattersAzFunc
     }
     private readonly ILogger<RegExMattersAzFunc> _logger;
 
+    /// <summary>
+    /// The token as written, then the same token with leading/trailing punctuation removed.
+    /// <para>
+    /// Tokenising keeps '.' and '-' because case numbers need them internally
+    /// (30-2023-01351580-CU-PO-NJC). That also means "100.238- Santa Rosa" tokenises to
+    /// "100.238-", and every pattern here is anchored, so the trailing hyphen made the match
+    /// fail and the mail was filed under UnsortedMatterCommunication instead of its matter.
+    /// "matter-number- description" is a common way to write a subject line.
+    /// </para>
+    /// <para>
+    /// Only the ends are trimmed, never the interior, so hyphenated case numbers are
+    /// unaffected. The untrimmed form is tried first so nothing that matches today can change
+    /// what it matches.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> Candidates(string word)
+    {
+        yield return word;
+
+        var trimmed = word.Trim('.', '-', '_');
+        if (trimmed.Length > 0 && !string.Equals(trimmed, word, StringComparison.Ordinal))
+            yield return trimmed;
+    }
+
     public RegExMattersAzFunc(ILogger<RegExMattersAzFunc> logger)
     {
         _logger = logger;
@@ -45,7 +69,7 @@ public class RegExMattersAzFunc
 
             Match match;
 
-            //Replace all special characters in data.strData except . and - 
+            //Replace all special characters in data.strData except . and -
             data.strData = Regex.Replace(data.strData, @"[^\w.-]", " ");
 
             // Split the input string by any whitespace characters
@@ -55,9 +79,10 @@ public class RegExMattersAzFunc
             {
 
                 // 1. RSE File No
+                foreach (string candidate in Candidates(word))
                 foreach (string pattern in RSEFileNoPatterns.Patterns)
                 {
-                    match = Regex.Match(word, pattern);
+                    match = Regex.Match(candidate, pattern);
                     if (match.Success)
                     {
                         return new OkObjectResult(new { match = match.Value, type = "RSE File No" });
@@ -69,9 +94,10 @@ public class RegExMattersAzFunc
             {
                 // 2. Case No / Claim No (values in these two columns share the same
                 // shapes, so one shared, generalized pattern set covers both)
+                foreach (string candidate in Candidates(word))
                 foreach (string pattern in CaseClaimNoPatterns.Patterns)
                 {
-                    match = Regex.Match(word, pattern);
+                    match = Regex.Match(candidate, pattern);
                     if (match.Success)
                     {
                         return new OkObjectResult(new { match = match.Value, type = "Case/Claim No" });
