@@ -59,9 +59,27 @@ Each of these was measured against the live tenant, and several contradict the d
    pilot. This is what makes `TopicNaming=Shared` possible and removes the per-user topic
    sprawl (72 topics + 72 event subscriptions, all feeding the same queue anyway).
 
-4. **`changeType: "Created,Updated"` works on the Event Grid transport.** The Event Grid docs
-   claim `Created` is unsupported; all live subscriptions persist it and deliver. Do not
-   "fix" this — dropping `Created` would stop new-mail events, which is the entire point.
+4. **`changeType: "Created"` works on the Event Grid transport.** The Event Grid docs claim
+   `Created` is unsupported; all live subscriptions persist it and deliver. Do not "fix"
+   this — dropping `Created` would stop new-mail events, which is the entire point.
+
+   `Updated` **was** subscribed alongside it until 2026-08-08, and was removed. It fires on
+   every read, flag and move, and because archive blob names are deterministic (matter +
+   sanitised subject) each one re-downloaded the message from Graph and overwrote a blob that
+   was already correct. Measured against live traffic before the change:
+
+   | | |
+   |---|---|
+   | share of all queue events that were `updated` | **87%** |
+   | archiving runs sampled / distinct blobs written | 84 / **7** |
+   | most re-archived single email | **44 times** |
+
+   Do not add it back to guard against a missed message. The queue consumer is peek-lock and
+   retries a failed message up to `maxDeliveryCount` before dead-lettering it, so a transient
+   failure on the `Created` event is already covered — without duplicating every subsequent
+   event for the life of that message.
+
+   Set via `GraphSub__ChangeTypes` (default `Created`).
 
 5. **Max subscription lifetime is 7 days**, and a requested `now + 6 days` is granted
    verbatim. Renewing to 6 days means **six consecutive missed nightly runs** before
@@ -87,6 +105,7 @@ The ones you must get right:
 | `GraphSub__TopicNaming` | `Shared` | `PerUser` reproduces the legacy convention. |
 | `GraphSub__PartnerTopic` | `GETopicRSEShared` | |
 | `GraphSub__ServiceBusQueueResourceId` | …/queues/speventgridqueue | |
+| `GraphSub__ChangeTypes` | `Created` | See fact 4. Changing this **replaces every subscription** on the next run. |
 | `GraphSub__NotifyTo` / `NotifyFrom` | recipient / sender mailbox | Requires `Mail.Send`. |
 | `WEBSITE_TIME_ZONE` | `Pacific Standard Time` | **Required.** See below. |
 
@@ -167,6 +186,28 @@ the vault, and `EventGrid Contributor` (or equivalent) on resource group `Sharep
 topic activation and event-subscription management.
 
 ---
+
+## Replacing subscriptions when their shape changes
+
+`changeType` and `resource` are **immutable** on a Graph subscription — `PATCH` only moves
+`expirationDateTime`. So altering either means deleting and recreating all of them.
+
+`MatchesDesiredShape` compares each live subscription against what the engine would create
+today, and `MigrateAsync` replaces the ones that differ. Two details that are easy to get
+wrong and were deliberate here:
+
+- **The drift check runs before the renew-window skip.** Subscriptions are normally skipped
+  when they are not close to expiry. If drift were checked after that, a healthy subscription
+  would keep its old shape until it lapsed, and the migration would appear to do nothing for
+  days.
+- **Delete precedes create.** Creating first would briefly leave two live subscriptions on one
+  mailbox, and every event from it would arrive twice. The cost is a gap of a second or two
+  per mailbox where new mail raises no event; run migrations outside business hours.
+
+`changeType` is returned lower-cased by Graph and order is not stable, so the comparison is a
+case-insensitive set, not a string equality.
+
+Migration of 94 mailboxes took **59 seconds** at `MaxConcurrency=4`.
 
 ## Who gets a subscription
 
