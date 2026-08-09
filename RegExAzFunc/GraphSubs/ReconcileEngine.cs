@@ -118,6 +118,18 @@ public sealed class ReconcileEngine
             {
                 if (byMailbox.TryGetValue(target.Mail, out var existing))
                 {
+                    // changeType and resource are immutable on a Graph subscription, so drift
+                    // can only be corrected by replacing it. This has to run before the
+                    // renew-window skip below: otherwise a subscription that is not yet due
+                    // for renewal keeps the old shape until it lapses, and the migration
+                    // silently never happens.
+                    if (!MatchesDesiredShape(existing))
+                    {
+                        var mig = await MigrateAsync(existing, target, expiry, request.DryRun, token);
+                        if (mig.Reason is null) repaired.Add(mig); else failed.Add(mig);
+                        return;
+                    }
+
                     if (request.SkipRenew || existing.ExpirationDateTime > renewCutoff)
                     {
                         Interlocked.Increment(ref _skipped);
@@ -300,6 +312,56 @@ public sealed class ReconcileEngine
         }
 
         return true;
+    }
+
+    /// <summary>True when a live subscription already has the shape this engine would create
+    /// today. Compared as a set so "Created,Updated" and "Updated,Created" are the same thing
+    /// and casing does not matter — Graph returns these lower-cased.</summary>
+    private bool MatchesDesiredShape(GraphSubscription sub)
+    {
+        static HashSet<string> Split(string s) =>
+            new(s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.OrdinalIgnoreCase);
+
+        return Split(sub.ChangeType).SetEquals(Split(_opt.ChangeTypes));
+    }
+
+    /// <summary>Replaces a subscription whose immutable fields have drifted. Delete first: two
+    /// live subscriptions on one mailbox would double every event until the old one lapsed.</summary>
+    private async Task<UserOutcome> MigrateAsync(
+        GraphSubscription existing, RosterTarget target, DateTimeOffset expiry,
+        bool dryRun, CancellationToken ct)
+    {
+        if (dryRun)
+        {
+            return new UserOutcome
+            {
+                UserEmail = target.Mail,
+                PartnerTopic = _opt.TopicNameFor(target.Mail),
+                SubscriptionId = existing.Id,
+                Message = $"would replace: changeType '{existing.ChangeType}' -> '{_opt.ChangeTypes}'"
+            };
+        }
+
+        _log.LogInformation("Replacing subscription for {Mail}: changeType {Old} -> {New}.",
+            target.Mail, existing.ChangeType, _opt.ChangeTypes);
+
+        var del = await DeleteWithTopicAsync(existing, ct);
+        if (del != "deleted")
+        {
+            return new UserOutcome
+            {
+                UserEmail = target.Mail,
+                SubscriptionId = existing.Id,
+                Reason = nameof(FailureReason.GraphError),
+                Message = $"replace aborted, old subscription not removed: {del}"
+            };
+        }
+
+        var outcome = await CreateAsync(target, expiry, dryRun, ct);
+        if (outcome.Reason is null)
+            outcome.Message = $"replaced: changeType '{existing.ChangeType}' -> '{_opt.ChangeTypes}'";
+        return outcome;
     }
 
     private async Task<string> DeleteWithTopicAsync(GraphSubscription sub, CancellationToken ct)

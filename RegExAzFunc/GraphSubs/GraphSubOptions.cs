@@ -38,6 +38,21 @@ public sealed class GraphSubOptions
 
     // --- subscription behaviour --------------------------------------------
     public string ClientState { get; set; } = "secretClientValue";
+    /// <summary>Change types to subscribe to. <c>Created</c> only, deliberately.
+    /// <para>
+    /// <c>Updated</c> fires on every read, flag and move, and because archive blob names are
+    /// deterministic (matter + sanitised subject) each one re-downloads the message from Graph
+    /// and overwrites a blob that is already correct. Measured 2026-08-08: 87% of all events
+    /// were <c>updated</c>, and 84 archiving runs produced just 7 distinct blobs — one email
+    /// was re-archived 44 times.
+    /// </para>
+    /// <para>
+    /// Do NOT add <c>Updated</c> back to reduce the risk of a missed message. The queue
+    /// consumer is peek-lock and retries a failed message up to <c>maxDeliveryCount</c> before
+    /// dead-lettering it, so a transient failure on the <c>Created</c> event is already
+    /// covered without duplicating every subsequent event for the life of the message.
+    /// </para></summary>
+    public string ChangeTypes { get; set; } = "Created";
     /// <summary>Renew to now + this many days. Max allowed is 7 (10,080 min); 6 gives six
     /// consecutive missed nightly runs before anything actually lapses.</summary>
     public int RenewToDays { get; set; } = 6;

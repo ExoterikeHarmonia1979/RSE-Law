@@ -226,7 +226,7 @@ public sealed class GraphApiClient
         var url = _opt.NotificationUrlFor(mailbox);
         var payload = new
         {
-            changeType = "Created,Updated",
+            changeType = _opt.ChangeTypes,
             notificationUrl = url,
             lifecycleNotificationUrl = url,
             resource = $"/users/{mailbox}/messages",
