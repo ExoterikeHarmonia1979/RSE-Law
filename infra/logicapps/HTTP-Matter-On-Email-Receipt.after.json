@@ -14,960 +14,48 @@
     "definition": {
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "actions": {
-        "If_Message_No_Longer_Exists": {
-          "type": "If",
-          "runAfter": {
-            "Process_Message": [
-              "Failed",
-              "TimedOut"
-            ]
-          },
-          "actions": {
-            "Complete_Stale_Notification": {
-              "type": "ApiConnection",
-              "runAfter": {},
-              "inputs": {
-                "host": {
-                  "connection": {
-                    "name": "@parameters('$connections')['servicebus']['connectionId']"
-                  }
-                },
-                "queries": {
-                  "lockToken": "@triggerBody()?['LockToken']",
-                  "queueType": "Main"
-                },
-                "method": "delete",
-                "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete"
-              }
-            },
-            "Terminate_Stale_Handled": {
-              "type": "Terminate",
-              "runAfter": {
-                "Complete_Stale_Notification": [
-                  "Succeeded"
-                ]
-              },
-              "inputs": {
-                "runStatus": "Succeeded"
-              }
-            }
-          },
-          "expression": {
-            "and": [
+        "Initialize_variables": {
+          "inputs": {
+            "variables": [
               {
-                "equals": [
-                  "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
-                  404
-                ]
+                "name": "strRecipients",
+                "type": "string"
+              },
+              {
+                "name": "blnFoundItem",
+                "type": "boolean",
+                "value": false
+              },
+              {
+                "name": "strFoundMatter",
+                "type": "string"
+              },
+              {
+                "name": "arrAttachments",
+                "type": "array"
+              },
+              {
+                "name": "blnKeepProcessing",
+                "type": "boolean",
+                "value": true
+              },
+              {
+                "name": "strCC",
+                "type": "string"
               }
             ]
           },
-          "else": {
-            "actions": {
-              "Abandon_the_message_in_a_queue": {
-                "type": "ApiConnection",
-                "runAfter": {},
-                "inputs": {
-                  "host": {
-                    "connection": {
-                      "name": "@parameters('$connections')['servicebus']['connectionId']"
-                    }
-                  },
-                  "queries": {
-                    "lockToken": "@triggerBody()?['LockToken']",
-                    "queueType": "Main"
-                  },
-                  "method": "post",
-                  "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/abandon"
-                }
-              },
-              "Terminate_Failed": {
-                "type": "Terminate",
-                "runAfter": {
-                  "Abandon_the_message_in_a_queue": [
-                    "Succeeded",
-                    "Failed",
-                    "TimedOut"
-                  ]
-                },
-                "inputs": {
-                  "runError": {
-                    "message": "Message processing failed; message abandoned for redelivery.",
-                    "code": "ProcessingFailed"
-                  },
-                  "runStatus": "Failed"
-                }
-              }
-            }
-          }
+          "runAfter": {},
+          "type": "InitializeVariable"
         },
         "Process_Message": {
-          "type": "Scope",
           "runAfter": {
             "Initialize_variables": [
               "Succeeded"
             ]
           },
+          "type": "Scope",
           "actions": {
-            "Get_Message_ID": {
-              "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['Id']",
-              "metadata": {
-                "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
-              },
-              "runAfter": {
-                "Parse_JSON": [
-                  "Succeeded"
-                ]
-              },
-              "type": "Compose"
-            },
-            "If_Odata_ID_is_valid": {
-              "actions": {
-                "For_each_CC": {
-                  "actions": {
-                    "Append_to_string_variable_cc": {
-                      "inputs": {
-                        "name": "strCC",
-                        "value": "@concat(item()?['emailAddress']?['address'],';')"
-                      },
-                      "type": "AppendToStringVariable"
-                    }
-                  },
-                  "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['ccRecipients']",
-                  "runAfter": {
-                    "Get_Email_To": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Foreach",
-                  "runtimeConfiguration": {
-                    "concurrency": {
-                      "repetitions": 1
-                    }
-                  }
-                },
-                "For_each_Recipient": {
-                  "actions": {
-                    "Append_to_string_variable": {
-                      "inputs": {
-                        "name": "strRecipients",
-                        "value": "@concat(item()?['emailAddress']?['address'],';')\r\n"
-                      },
-                      "metadata": {
-                        "operationMetadataId": "b4a3650e-2efc-4e45-8187-cabf1b086969"
-                      },
-                      "type": "AppendToStringVariable"
-                    }
-                  },
-                  "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['toRecipients']",
-                  "runAfter": {
-                    "Get_Email_From": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Foreach",
-                  "runtimeConfiguration": {
-                    "concurrency": {
-                      "repetitions": 1
-                    }
-                  }
-                },
-                "Get_Email_CC": {
-                  "inputs": "@variables('strCC')",
-                  "runAfter": {
-                    "For_each_CC": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Compose"
-                },
-                "Get_Email_From": {
-                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['from']?['emailAddress']?['address']",
-                  "metadata": {
-                    "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
-                  },
-                  "runAfter": {
-                    "Get_Email_Subject": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Compose"
-                },
-                "Get_Email_Has_Attachments": {
-                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['hasAttachments']",
-                  "metadata": {
-                    "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
-                  },
-                  "runAfter": {
-                    "Get_Email_CC": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Compose"
-                },
-                "Get_Email_Subject": {
-                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['subject']",
-                  "metadata": {
-                    "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
-                  },
-                  "runAfter": {
-                    "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Compose"
-                },
-                "Get_Email_To": {
-                  "inputs": "@variables('strRecipients')",
-                  "metadata": {
-                    "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
-                  },
-                  "runAfter": {
-                    "For_each_Recipient": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "Compose"
-                },
-                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": {
-                  "inputs": {
-                    "method": "GET",
-                    "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}",
-                    "authentication": {
-                      "type": "ManagedServiceIdentity",
-                      "audience": "https://graph.microsoft.com"
-                    }
-                  },
-                  "metadata": {
-                    "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
-                  },
-                  "runtimeConfiguration": {
-                    "contentTransfer": {
-                      "transferMode": "Chunked"
-                    }
-                  },
-                  "type": "Http"
-                },
-                "If_Has_Attachments": {
-                  "actions": {
-                    "For_each_Attachment": {
-                      "actions": {
-                        "Append_to_arrAttachments": {
-                          "inputs": {
-                            "name": "arrAttachments",
-                            "value": {
-                              "Content": "@{body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content')}",
-                              "Name": "@{item()?['name']}"
-                            }
-                          },
-                          "runAfter": {
-                            "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": [
-                              "Succeeded"
-                            ]
-                          },
-                          "type": "AppendToArrayVariable"
-                        },
-                        "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": {
-                          "inputs": {
-                            "method": "GET",
-                            "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments/@{item()?['id']}/$value",
-                            "authentication": {
-                              "type": "ManagedServiceIdentity",
-                              "audience": "https://graph.microsoft.com"
-                            }
-                          },
-                          "metadata": {
-                            "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
-                          },
-                          "runtimeConfiguration": {
-                            "contentTransfer": {
-                              "transferMode": "Chunked"
-                            }
-                          },
-                          "type": "Http"
-                        }
-                      },
-                      "foreach": "@body('Get_Attachment_JSON')?['value']",
-                      "runAfter": {
-                        "Get_Attachment_JSON": [
-                          "Succeeded",
-                          "Failed"
-                        ]
-                      },
-                      "type": "Foreach",
-                      "runtimeConfiguration": {
-                        "concurrency": {
-                          "repetitions": 1
-                        }
-                      }
-                    },
-                    "Get_Attachment_JSON": {
-                      "inputs": {
-                        "content": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachments')",
-                        "schema": {
-                          "properties": {
-                            "value": {
-                              "items": {
-                                "properties": {
-                                  "@@odata.type": {
-                                    "type": "string"
-                                  },
-                                  "contentBytes": {
-                                    "type": "string"
-                                  },
-                                  "contentType": {
-                                    "type": "string"
-                                  },
-                                  "id": {
-                                    "type": "string"
-                                  },
-                                  "isInline": {
-                                    "type": "boolean"
-                                  },
-                                  "lastModifiedDateTime": {
-                                    "type": "string"
-                                  },
-                                  "name": {
-                                    "type": "string"
-                                  },
-                                  "size": {
-                                    "type": "integer"
-                                  }
-                                },
-                                "required": [
-                                  "@@odata.type",
-                                  "id",
-                                  "lastModifiedDateTime",
-                                  "name",
-                                  "contentType",
-                                  "size",
-                                  "isInline"
-                                ],
-                                "type": "object"
-                              },
-                              "type": "array"
-                            }
-                          },
-                          "type": "object"
-                        }
-                      },
-                      "runAfter": {
-                        "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": [
-                          "Succeeded",
-                          "Failed"
-                        ]
-                      },
-                      "type": "ParseJson"
-                    },
-                    "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": {
-                      "inputs": {
-                        "method": "GET",
-                        "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments",
-                        "authentication": {
-                          "type": "ManagedServiceIdentity",
-                          "audience": "https://graph.microsoft.com"
-                        }
-                      },
-                      "metadata": {
-                        "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
-                      },
-                      "runtimeConfiguration": {
-                        "contentTransfer": {
-                          "transferMode": "Chunked"
-                        }
-                      },
-                      "type": "Http"
-                    }
-                  },
-                  "else": {
-                    "actions": {}
-                  },
-                  "expression": {
-                    "and": [
-                      {
-                        "equals": [
-                          "@outputs('Get_Email_Has_Attachments')",
-                          true
-                        ]
-                      }
-                    ]
-                  },
-                  "runAfter": {
-                    "Get_Email_Has_Attachments": [
-                      "Succeeded"
-                    ]
-                  },
-                  "type": "If"
-                },
-                "Not_empty_subject": {
-                  "actions": {
-                    "Get_Reg_Ex_Match_All_Subject": {
-                      "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['match']",
-                      "runAfter": {
-                        "HTTP_Az_Func_Reg_Matter_Full_Subject_": [
-                          "Succeeded"
-                        ]
-                      },
-                      "type": "Compose"
-                    },
-                    "HTTP_Az_Func_Reg_Matter_Full_Subject_": {
-                      "inputs": {
-                        "body": {
-                          "strData": "@{outputs('Get_Email_Subject')}"
-                        },
-                        "headers": {
-                          "Accept": "application/json"
-                        },
-                        "method": "POST",
-                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc"
-                      },
-                      "runtimeConfiguration": {
-                        "contentTransfer": {
-                          "transferMode": "Chunked"
-                        }
-                      },
-                      "type": "Http"
-                    },
-                    "If_BlnFoundItem_and_not_calendar": {
-                      "actions": {
-                        "For_each_Attachment_1": {
-                          "type": "Foreach",
-                          "runAfter": {
-                            "Create_blob_1": [
-                              "Succeeded"
-                            ]
-                          },
-                          "foreach": "@variables('arrAttachments')",
-                          "runtimeConfiguration": {
-                            "concurrency": {
-                              "repetitions": 4
-                            }
-                          },
-                          "actions": {
-                            "Create_blob_for_Attachment": {
-                              "type": "ApiConnection",
-                              "runAfter": {},
-                              "inputs": {
-                                "host": {
-                                  "connection": {
-                                    "name": "@parameters('$connections')['azureblob-1']['connectionId']"
-                                  }
-                                },
-                                "queries": {
-                                  "name": "@if(greater(length(replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')), 180), substring(replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), 0, 180), replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'))",
-                                  "queryParametersSingleEncoded": true,
-                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/"
-                                },
-                                "method": "post",
-                                "body": "@item()?['Content']",
-                                "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
-                              }
-                            }
-                          }
-                        },
-                        "HTTP_Graph_API_Call_to_Get_Email_Message_Value": {
-                          "type": "Http",
-                          "runAfter": {
-                            "Email_Blob_Name": [
-                              "Succeeded"
-                            ]
-                          },
-                          "inputs": {
-                            "method": "GET",
-                            "authentication": {
-                              "type": "ManagedServiceIdentity",
-                              "audience": "https://graph.microsoft.com"
-                            },
-                            "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
-                          },
-                          "runtimeConfiguration": {
-                            "contentTransfer": {
-                              "transferMode": "Chunked"
-                            }
-                          }
-                        },
-                        "Create_blob_1": {
-                          "type": "ApiConnection",
-                          "runAfter": {
-                            "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
-                              "Succeeded"
-                            ]
-                          },
-                          "inputs": {
-                            "host": {
-                              "connection": {
-                                "name": "@parameters('$connections')['azureblob-1']['connectionId']"
-                              }
-                            },
-                            "queries": {
-                              "name": "@outputs('Email_Blob_Name')",
-                              "queryParametersSingleEncoded": true,
-                              "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/"
-                            },
-                            "method": "post",
-                            "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
-                            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
-                          }
-                        },
-                        "Email_Blob_Name": {
-                          "type": "Compose",
-                          "runAfter": {},
-                          "inputs": "@concat(if(greater(length(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')), 180), substring(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), 0, 180), replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_')), '.eml')"
-                        }
-                      },
-                      "else": {
-                        "actions": {}
-                      },
-                      "expression": {
-                        "and": [
-                          {
-                            "equals": [
-                              "@variables('blnFoundItem')",
-                              "@true"
-                            ]
-                          },
-                          {
-                            "equals": [
-                              "@empty(trim(coalesce(variables('strFoundMatter'),'')))",
-                              "@false"
-                            ]
-                          },
-                          {
-                            "not": {
-                              "contains": [
-                                "@toUpper(coalesce(outputs('Get_Email_From'),''))",
-                                "CALENDAR"
-                              ]
-                            }
-                          },
-                          {
-                            "not": {
-                              "contains": [
-                                "@toUpper(coalesce(outputs('Get_Email_To'),''))",
-                                "CALENDAR"
-                              ]
-                            }
-                          }
-                        ]
-                      },
-                      "runAfter": {
-                        "If_Subject_has_Reg_Ex_Match": [
-                          "Succeeded"
-                        ]
-                      },
-                      "type": "If"
-                    },
-                    "If_Subject_has_Reg_Ex_Match": {
-                      "actions": {
-                        "Get_items_In_LookUp_List": {
-                          "inputs": {
-                            "host": {
-                              "connection": {
-                                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
-                              }
-                            },
-                            "method": "get",
-                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
-                            "queries": {
-                              "$filter": "RSEFileNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or CaseNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or ClaimNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}'"
-                            }
-                          },
-                          "type": "ApiConnection"
-                        },
-                        "If_Found_Item_in_List": {
-                          "actions": {
-                            "Set_variable_blnFoundItem": {
-                              "inputs": {
-                                "name": "blnFoundItem",
-                                "value": true
-                              },
-                              "metadata": {
-                                "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
-                              },
-                              "type": "SetVariable"
-                            },
-                            "Set_variable_strFoundMatter": {
-                              "inputs": {
-                                "name": "strFoundMatter",
-                                "value": "@outputs('Get_items_In_LookUp_List')?['body/value'][0]?['RSEFileNo']"
-                              },
-                              "metadata": {
-                                "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
-                              },
-                              "runAfter": {
-                                "Set_variable_blnFoundItem": [
-                                  "Succeeded"
-                                ]
-                              },
-                              "type": "SetVariable"
-                            }
-                          },
-                          "else": {
-                            "actions": {
-                              "If_Well_Formed_RSE_No_Not_In_List": {
-                                "type": "If",
-                                "runAfter": {},
-                                "actions": {
-                                  "Set_variable_blnFoundItem_Unlisted": {
-                                    "type": "SetVariable",
-                                    "runAfter": {},
-                                    "inputs": {
-                                      "name": "blnFoundItem",
-                                      "value": "@true"
-                                    }
-                                  },
-                                  "Set_variable_strFoundMatter_Unlisted": {
-                                    "type": "SetVariable",
-                                    "runAfter": {
-                                      "Set_variable_blnFoundItem_Unlisted": [
-                                        "Succeeded"
-                                      ]
-                                    },
-                                    "inputs": {
-                                      "name": "strFoundMatter",
-                                      "value": "@outputs('Get_Reg_Ex_Match_All_Subject')"
-                                    }
-                                  }
-                                },
-                                "expression": {
-                                  "and": [
-                                    {
-                                      "equals": [
-                                        "@outputs('Get_Reg_Ex_Match_Type')",
-                                        "RSE File No"
-                                      ]
-                                    }
-                                  ]
-                                },
-                                "else": {
-                                  "actions": {}
-                                }
-                              }
-                            }
-                          },
-                          "expression": {
-                            "and": [
-                              {
-                                "not": {
-                                  "equals": [
-                                    "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
-                                    0
-                                  ]
-                                }
-                              }
-                            ]
-                          },
-                          "runAfter": {
-                            "Get_items_In_LookUp_List": [
-                              "Succeeded"
-                            ]
-                          },
-                          "type": "If"
-                        }
-                      },
-                      "else": {
-                        "actions": {
-                          "Build_Lookup_Clauses": {
-                            "type": "Select",
-                            "runAfter": {
-                              "Candidate_Subject_Words": [
-                                "Succeeded"
-                              ]
-                            },
-                            "inputs": {
-                              "from": "@outputs('Candidate_Subject_Words')",
-                              "select": "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')"
-                            }
-                          },
-                          "Filter_Subject_Words": {
-                            "type": "Query",
-                            "runAfter": {
-                              "Split_Subject_into_array": [
-                                "Succeeded"
-                              ]
-                            },
-                            "inputs": {
-                              "from": "@outputs('Split_Subject_into_array')",
-                              "where": "@greater(length(string(item())), 2)"
-                            }
-                          },
-                          "Candidate_Subject_Words": {
-                            "type": "Compose",
-                            "runAfter": {
-                              "Filter_Subject_Words": [
-                                "Succeeded"
-                              ]
-                            },
-                            "inputs": "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)"
-                          },
-                          "Split_Subject_into_array": {
-                            "inputs": "@split(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(\noutputs('Get_Email_Subject')  ,\n  '!', ' '), '\"', ' '), '#', ' '), '$', ' '), '%', ' '), '&', ' '), '''', ' '), '(', ' '), ')', ' '), '*', ' '), '+', ' '), ',', ' '), '/', ' '), ':', ' '), ';', ' '), '<', ' '), '=', ' '), '>', ' '), '?', ' '), '@', ' '), '[', ' '), '\\', ' '), ']', ' '), '^', ' '), '_', ' '), '`', ' '), '{', ' '), '|', ' '), '}', ' '), '~', ' '),\n  '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),' ')",
-                            "type": "Compose"
-                          },
-                          "If_Any_Candidate_Words": {
-                            "type": "If",
-                            "runAfter": {
-                              "Set_variable_blnKeepProcessing": [
-                                "Succeeded"
-                              ]
-                            },
-                            "actions": {
-                              "Get_items_In_LookUp_List_By_Subject_Word": {
-                                "type": "ApiConnection",
-                                "runAfter": {},
-                                "inputs": {
-                                  "host": {
-                                    "connection": {
-                                      "name": "@parameters('$connections')['sharepointonline']['connectionId']"
-                                    }
-                                  },
-                                  "queries": {
-                                    "$filter": "@join(body('Build_Lookup_Clauses'), ' or ')"
-                                  },
-                                  "method": "get",
-                                  "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items"
-                                }
-                              },
-                              "For_each_Subject_Word": {
-                                "type": "Foreach",
-                                "runAfter": {
-                                  "Get_items_In_LookUp_List_By_Subject_Word": [
-                                    "Succeeded"
-                                  ]
-                                },
-                                "foreach": "@outputs('Candidate_Subject_Words')",
-                                "runtimeConfiguration": {
-                                  "concurrency": {
-                                    "repetitions": 1
-                                  }
-                                },
-                                "actions": {
-                                  "If_blnKeepProcessing": {
-                                    "type": "If",
-                                    "runAfter": {},
-                                    "actions": {
-                                      "If_Item_Found_In_List_and_blnKeepProcessing": {
-                                        "type": "If",
-                                        "runAfter": {
-                                          "Filter_Rows_Matching_Word": [
-                                            "Succeeded"
-                                          ]
-                                        },
-                                        "actions": {
-                                          "Set_variable_strFoundMatter_1": {
-                                            "type": "SetVariable",
-                                            "runAfter": {
-                                              "Set_variable_blnFoundItem_1": [
-                                                "Succeeded"
-                                              ]
-                                            },
-                                            "inputs": {
-                                              "name": "strFoundMatter",
-                                              "value": "@first(body('Filter_Rows_Matching_Word'))?['RSEFileNo']"
-                                            }
-                                          },
-                                          "Set_variable_blnKeepProcessing_False": {
-                                            "type": "SetVariable",
-                                            "runAfter": {
-                                              "Set_variable_strFoundMatter_1": [
-                                                "Succeeded"
-                                              ]
-                                            },
-                                            "inputs": {
-                                              "name": "blnKeepProcessing",
-                                              "value": "@false"
-                                            }
-                                          },
-                                          "Set_variable_blnFoundItem_1": {
-                                            "type": "SetVariable",
-                                            "runAfter": {},
-                                            "inputs": {
-                                              "name": "blnFoundItem",
-                                              "value": "@true"
-                                            }
-                                          }
-                                        },
-                                        "expression": {
-                                          "and": [
-                                            {
-                                              "not": {
-                                                "equals": [
-                                                  "@length(body('Filter_Rows_Matching_Word'))",
-                                                  0
-                                                ]
-                                              }
-                                            }
-                                          ]
-                                        },
-                                        "else": {
-                                          "actions": {}
-                                        }
-                                      },
-                                      "Filter_Rows_Matching_Word": {
-                                        "type": "Query",
-                                        "runAfter": {},
-                                        "inputs": {
-                                          "from": "@body('Get_items_In_LookUp_List_By_Subject_Word')?['value']",
-                                          "where": "@or(or(equals(item()?['RSEFileNo'], items('For_each_Subject_Word')), equals(item()?['CaseNo'], items('For_each_Subject_Word'))), equals(item()?['ClaimNo'], items('For_each_Subject_Word')))"
-                                        }
-                                      }
-                                    },
-                                    "expression": {
-                                      "and": [
-                                        {
-                                          "equals": [
-                                            "@variables('blnKeepProcessing')",
-                                            "@true"
-                                          ]
-                                        }
-                                      ]
-                                    },
-                                    "else": {
-                                      "actions": {}
-                                    }
-                                  }
-                                }
-                              }
-                            },
-                            "expression": {
-                              "and": [
-                                {
-                                  "not": {
-                                    "equals": [
-                                      "@length(outputs('Candidate_Subject_Words'))",
-                                      0
-                                    ]
-                                  }
-                                }
-                              ]
-                            },
-                            "else": {
-                              "actions": {}
-                            }
-                          },
-                          "Set_variable_blnKeepProcessing": {
-                            "type": "SetVariable",
-                            "runAfter": {
-                              "Build_Lookup_Clauses": [
-                                "Succeeded"
-                              ]
-                            },
-                            "inputs": {
-                              "name": "blnKeepProcessing",
-                              "value": "@true"
-                            }
-                          }
-                        }
-                      },
-                      "expression": {
-                        "and": [
-                          {
-                            "not": {
-                              "equals": [
-                                "@outputs('Get_Reg_Ex_Match_All_Subject')",
-                                ""
-                              ]
-                            }
-                          },
-                          {
-                            "not": {
-                              "equals": [
-                                "@outputs('Get_Reg_Ex_Match_All_Subject')",
-                                "@null"
-                              ]
-                            }
-                          }
-                        ]
-                      },
-                      "runAfter": {
-                        "Get_Reg_Ex_Match_Type": [
-                          "Succeeded"
-                        ]
-                      },
-                      "type": "If"
-                    },
-                    "Get_Reg_Ex_Match_Type": {
-                      "type": "Compose",
-                      "runAfter": {
-                        "Get_Reg_Ex_Match_All_Subject": [
-                          "Succeeded"
-                        ]
-                      },
-                      "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
-                    }
-                  },
-                  "else": {
-                    "actions": {}
-                  },
-                  "expression": {
-                    "and": [
-                      {
-                        "equals": [
-                          "@empty(outputs('Get_Email_Subject'))",
-                          "@false"
-                        ]
-                      },
-                      {
-                        "not": {
-                          "equals": [
-                            "@outputs('Get_Email_Subject')",
-                            "@null"
-                          ]
-                        }
-                      }
-                    ]
-                  },
-                  "runAfter": {
-                    "If_Has_Attachments": [
-                      "Succeeded",
-                      "Failed"
-                    ]
-                  },
-                  "type": "If"
-                }
-              },
-              "else": {
-                "actions": {}
-              },
-              "expression": {
-                "and": [
-                  {
-                    "not": {
-                      "equals": [
-                        "@outputs('Get_OData_ID')",
-                        ""
-                      ]
-                    }
-                  },
-                  {
-                    "not": {
-                      "equals": [
-                        "@outputs('Get_OData_ID')",
-                        "@null"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "runAfter": {
-                "Get_OData_ID": [
-                  "Succeeded"
-                ]
-              },
-              "type": "If"
-            },
-            "Get_OData_ID": {
-              "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']",
-              "metadata": {
-                "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
-              },
-              "runAfter": {
-                "Get_Message_ID": [
-                  "Succeeded"
-                ]
-              },
-              "type": "Compose"
-            },
             "Parse_JSON": {
               "inputs": {
                 "content": "@outputs('Get_Message_JSON')",
@@ -1096,67 +184,979 @@
               },
               "type": "ParseJson"
             },
+            "If_Odata_ID_is_valid": {
+              "actions": {
+                "For_each_CC": {
+                  "actions": {
+                    "Append_to_string_variable_cc": {
+                      "inputs": {
+                        "name": "strCC",
+                        "value": "@concat(item()?['emailAddress']?['address'],';')"
+                      },
+                      "type": "AppendToStringVariable"
+                    }
+                  },
+                  "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['ccRecipients']",
+                  "runAfter": {
+                    "Get_Email_To": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Foreach",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  }
+                },
+                "For_each_Recipient": {
+                  "actions": {
+                    "Append_to_string_variable": {
+                      "inputs": {
+                        "name": "strRecipients",
+                        "value": "@concat(item()?['emailAddress']?['address'],';')\r\n"
+                      },
+                      "metadata": {
+                        "operationMetadataId": "b4a3650e-2efc-4e45-8187-cabf1b086969"
+                      },
+                      "type": "AppendToStringVariable"
+                    }
+                  },
+                  "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['toRecipients']",
+                  "runAfter": {
+                    "Get_Email_From": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Foreach",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  }
+                },
+                "Get_Email_CC": {
+                  "inputs": "@variables('strCC')",
+                  "runAfter": {
+                    "For_each_CC": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "Get_Email_From": {
+                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['from']?['emailAddress']?['address']",
+                  "metadata": {
+                    "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
+                  },
+                  "runAfter": {
+                    "Get_Email_Subject": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "Get_Email_Has_Attachments": {
+                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['hasAttachments']",
+                  "metadata": {
+                    "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
+                  },
+                  "runAfter": {
+                    "Get_Email_CC": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "Get_Email_Subject": {
+                  "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['subject']",
+                  "metadata": {
+                    "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
+                  },
+                  "runAfter": {
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "Get_Email_To": {
+                  "inputs": "@variables('strRecipients')",
+                  "metadata": {
+                    "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
+                  },
+                  "runAfter": {
+                    "For_each_Recipient": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose"
+                },
+                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": {
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}",
+                    "authentication": {
+                      "audience": "https://graph.microsoft.com",
+                      "type": "ManagedServiceIdentity"
+                    }
+                  },
+                  "metadata": {
+                    "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                  },
+                  "runtimeConfiguration": {
+                    "contentTransfer": {
+                      "transferMode": "Chunked"
+                    }
+                  },
+                  "type": "Http"
+                },
+                "If_Has_Attachments": {
+                  "actions": {
+                    "For_each_Attachment": {
+                      "actions": {
+                        "Append_to_arrAttachments": {
+                          "inputs": {
+                            "name": "arrAttachments",
+                            "value": {
+                              "Content": "@{body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content')}",
+                              "Name": "@{item()?['name']}"
+                            }
+                          },
+                          "runAfter": {
+                            "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "AppendToArrayVariable"
+                        },
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": {
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments/@{item()?['id']}/$value",
+                            "authentication": {
+                              "audience": "https://graph.microsoft.com",
+                              "type": "ManagedServiceIdentity"
+                            }
+                          },
+                          "metadata": {
+                            "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "type": "Http"
+                        }
+                      },
+                      "foreach": "@body('Get_Attachment_JSON')?['value']",
+                      "runAfter": {
+                        "Get_Attachment_JSON": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "Foreach",
+                      "runtimeConfiguration": {
+                        "concurrency": {
+                          "repetitions": 1
+                        }
+                      }
+                    },
+                    "Get_Attachment_JSON": {
+                      "inputs": {
+                        "content": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Attachments')",
+                        "schema": {
+                          "properties": {
+                            "value": {
+                              "items": {
+                                "properties": {
+                                  "@@odata.type": {
+                                    "type": "string"
+                                  },
+                                  "contentBytes": {
+                                    "type": "string"
+                                  },
+                                  "contentType": {
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "isInline": {
+                                    "type": "boolean"
+                                  },
+                                  "lastModifiedDateTime": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "size": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": [
+                                  "@@odata.type",
+                                  "id",
+                                  "lastModifiedDateTime",
+                                  "name",
+                                  "contentType",
+                                  "size",
+                                  "isInline"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "runAfter": {
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "type": "ParseJson"
+                    },
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_Attachments": {
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments",
+                        "authentication": {
+                          "audience": "https://graph.microsoft.com",
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "metadata": {
+                        "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@outputs('Get_Email_Has_Attachments')",
+                          true
+                        ]
+                      }
+                    ]
+                  },
+                  "runAfter": {
+                    "Get_Email_Has_Attachments": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "If"
+                },
+                "Not_empty_subject": {
+                  "actions": {
+                    "Get_Reg_Ex_Match_All_Subject": {
+                      "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['match']",
+                      "runAfter": {
+                        "HTTP_Az_Func_Reg_Matter_Full_Subject_": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "Compose"
+                    },
+                    "HTTP_Az_Func_Reg_Matter_Full_Subject_": {
+                      "inputs": {
+                        "body": {
+                          "strData": "@{outputs('Get_Email_Subject')}"
+                        },
+                        "headers": {
+                          "Accept": "application/json"
+                        },
+                        "method": "POST",
+                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc"
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      },
+                      "type": "Http"
+                    },
+                    "If_BlnFoundItem_and_not_calendar": {
+                      "actions": {
+                        "For_each_Attachment_1": {
+                          "runtimeConfiguration": {
+                            "concurrency": {
+                              "repetitions": 4
+                            }
+                          },
+                          "foreach": "@variables('arrAttachments')",
+                          "type": "Foreach",
+                          "actions": {
+                            "Create_blob_for_Attachment": {
+                              "runAfter": {},
+                              "type": "ApiConnection",
+                              "inputs": {
+                                "body": "@item()?['Content']",
+                                "method": "post",
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                                  }
+                                },
+                                "queries": {
+                                  "name": "@trim(if(greater(length(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_')), 180), substring(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_'), 0, 180), replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(item()?['Name'], '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_')))",
+                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                                  "queryParametersSingleEncoded": true
+                                },
+                                "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
+                              }
+                            }
+                          },
+                          "runAfter": {
+                            "Create_blob_1": [
+                              "Succeeded"
+                            ]
+                          }
+                        },
+                        "Email_Blob_Name": {
+                          "runAfter": {},
+                          "type": "Compose",
+                          "inputs": "@concat(trim(if(greater(length(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_')), 180), substring(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_'), 0, 180), replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0D'), '_'))), '.eml')"
+                        },
+                        "Create_blob_1": {
+                          "runAfter": {
+                            "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "ApiConnection",
+                          "inputs": {
+                            "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
+                            "method": "post",
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['azureblob-1']['connectionId']"
+                              }
+                            },
+                            "queries": {
+                              "name": "@outputs('Email_Blob_Name')",
+                              "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/",
+                              "queryParametersSingleEncoded": true
+                            },
+                            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
+                          }
+                        },
+                        "HTTP_Graph_API_Call_to_Get_Email_Message_Value": {
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          },
+                          "runAfter": {
+                            "Email_Blob_Name": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "authentication": {
+                              "audience": "https://graph.microsoft.com",
+                              "type": "ManagedServiceIdentity"
+                            },
+                            "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@variables('blnFoundItem')",
+                              "@true"
+                            ]
+                          },
+                          {
+                            "equals": [
+                              "@empty(trim(coalesce(variables('strFoundMatter'),'')))",
+                              "@false"
+                            ]
+                          },
+                          {
+                            "not": {
+                              "contains": [
+                                "@toUpper(coalesce(outputs('Get_Email_From'),''))",
+                                "CALENDAR"
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "contains": [
+                                "@toUpper(coalesce(outputs('Get_Email_To'),''))",
+                                "CALENDAR"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "If_Subject_has_Reg_Ex_Match": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_Subject_has_Reg_Ex_Match": {
+                      "actions": {
+                        "Get_items_In_LookUp_List": {
+                          "inputs": {
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                              }
+                            },
+                            "method": "get",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
+                            "queries": {
+                              "$filter": "RSEFileNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or CaseNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or ClaimNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}'"
+                            }
+                          },
+                          "type": "ApiConnection"
+                        },
+                        "If_Found_Item_in_List": {
+                          "actions": {
+                            "Set_variable_blnFoundItem": {
+                              "inputs": {
+                                "name": "blnFoundItem",
+                                "value": true
+                              },
+                              "metadata": {
+                                "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+                              },
+                              "type": "SetVariable"
+                            },
+                            "Set_variable_strFoundMatter": {
+                              "inputs": {
+                                "name": "strFoundMatter",
+                                "value": "@outputs('Get_items_In_LookUp_List')?['body/value'][0]?['RSEFileNo']"
+                              },
+                              "metadata": {
+                                "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+                              },
+                              "runAfter": {
+                                "Set_variable_blnFoundItem": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "type": "SetVariable"
+                            }
+                          },
+                          "else": {
+                            "actions": {
+                              "If_Well_Formed_RSE_No_Not_In_List": {
+                                "else": {
+                                  "actions": {}
+                                },
+                                "runAfter": {},
+                                "type": "If",
+                                "expression": {
+                                  "and": [
+                                    {
+                                      "equals": [
+                                        "@outputs('Get_Reg_Ex_Match_Type')",
+                                        "RSE File No"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "actions": {
+                                  "Set_variable_strFoundMatter_Unlisted": {
+                                    "runAfter": {
+                                      "Set_variable_blnFoundItem_Unlisted": [
+                                        "Succeeded"
+                                      ]
+                                    },
+                                    "type": "SetVariable",
+                                    "inputs": {
+                                      "value": "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                                      "name": "strFoundMatter"
+                                    }
+                                  },
+                                  "Set_variable_blnFoundItem_Unlisted": {
+                                    "runAfter": {},
+                                    "type": "SetVariable",
+                                    "inputs": {
+                                      "value": "@true",
+                                      "name": "blnFoundItem"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
+                                    0
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "runAfter": {
+                            "Get_items_In_LookUp_List": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Set_variable_blnKeepProcessing": {
+                            "runAfter": {
+                              "Build_Lookup_Clauses": [
+                                "Succeeded"
+                              ]
+                            },
+                            "type": "SetVariable",
+                            "inputs": {
+                              "value": "@true",
+                              "name": "blnKeepProcessing"
+                            }
+                          },
+                          "If_Any_Candidate_Words": {
+                            "else": {
+                              "actions": {}
+                            },
+                            "runAfter": {
+                              "Set_variable_blnKeepProcessing": [
+                                "Succeeded"
+                              ]
+                            },
+                            "type": "If",
+                            "expression": {
+                              "and": [
+                                {
+                                  "not": {
+                                    "equals": [
+                                      "@length(outputs('Candidate_Subject_Words'))",
+                                      0
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            "actions": {
+                              "Get_items_In_LookUp_List_By_Subject_Word": {
+                                "runAfter": {},
+                                "type": "ApiConnection",
+                                "inputs": {
+                                  "method": "get",
+                                  "host": {
+                                    "connection": {
+                                      "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                    }
+                                  },
+                                  "queries": {
+                                    "$filter": "@join(body('Build_Lookup_Clauses'), ' or ')"
+                                  },
+                                  "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items"
+                                }
+                              },
+                              "For_each_Subject_Word": {
+                                "runtimeConfiguration": {
+                                  "concurrency": {
+                                    "repetitions": 1
+                                  }
+                                },
+                                "foreach": "@outputs('Candidate_Subject_Words')",
+                                "type": "Foreach",
+                                "actions": {
+                                  "If_blnKeepProcessing": {
+                                    "else": {
+                                      "actions": {}
+                                    },
+                                    "runAfter": {},
+                                    "type": "If",
+                                    "expression": {
+                                      "and": [
+                                        {
+                                          "equals": [
+                                            "@variables('blnKeepProcessing')",
+                                            "@true"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "actions": {
+                                      "If_Item_Found_In_List_and_blnKeepProcessing": {
+                                        "else": {
+                                          "actions": {}
+                                        },
+                                        "runAfter": {
+                                          "Filter_Rows_Matching_Word": [
+                                            "Succeeded"
+                                          ]
+                                        },
+                                        "type": "If",
+                                        "expression": {
+                                          "and": [
+                                            {
+                                              "not": {
+                                                "equals": [
+                                                  "@length(body('Filter_Rows_Matching_Word'))",
+                                                  0
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        "actions": {
+                                          "Set_variable_blnFoundItem_1": {
+                                            "runAfter": {},
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                              "value": "@true",
+                                              "name": "blnFoundItem"
+                                            }
+                                          },
+                                          "Set_variable_strFoundMatter_1": {
+                                            "runAfter": {
+                                              "Set_variable_blnFoundItem_1": [
+                                                "Succeeded"
+                                              ]
+                                            },
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                              "value": "@first(body('Filter_Rows_Matching_Word'))?['RSEFileNo']",
+                                              "name": "strFoundMatter"
+                                            }
+                                          },
+                                          "Set_variable_blnKeepProcessing_False": {
+                                            "runAfter": {
+                                              "Set_variable_strFoundMatter_1": [
+                                                "Succeeded"
+                                              ]
+                                            },
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                              "value": "@false",
+                                              "name": "blnKeepProcessing"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "Filter_Rows_Matching_Word": {
+                                        "runAfter": {},
+                                        "type": "Query",
+                                        "inputs": {
+                                          "where": "@or(or(equals(item()?['RSEFileNo'], items('For_each_Subject_Word')), equals(item()?['CaseNo'], items('For_each_Subject_Word'))), equals(item()?['ClaimNo'], items('For_each_Subject_Word')))",
+                                          "from": "@body('Get_items_In_LookUp_List_By_Subject_Word')?['value']"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "runAfter": {
+                                  "Get_items_In_LookUp_List_By_Subject_Word": [
+                                    "Succeeded"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "Filter_Subject_Words": {
+                            "runAfter": {
+                              "Split_Subject_into_array": [
+                                "Succeeded"
+                              ]
+                            },
+                            "type": "Query",
+                            "inputs": {
+                              "where": "@greater(length(string(item())), 2)",
+                              "from": "@outputs('Split_Subject_into_array')"
+                            }
+                          },
+                          "Build_Lookup_Clauses": {
+                            "runAfter": {
+                              "Candidate_Subject_Words": [
+                                "Succeeded"
+                              ]
+                            },
+                            "type": "Select",
+                            "inputs": {
+                              "select": "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')",
+                              "from": "@outputs('Candidate_Subject_Words')"
+                            }
+                          },
+                          "Split_Subject_into_array": {
+                            "inputs": "@split(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(\noutputs('Get_Email_Subject')  ,\n  '!', ' '), '\"', ' '), '#', ' '), '$', ' '), '%', ' '), '&', ' '), '''', ' '), '(', ' '), ')', ' '), '*', ' '), '+', ' '), ',', ' '), '/', ' '), ':', ' '), ';', ' '), '<', ' '), '=', ' '), '>', ' '), '?', ' '), '@', ' '), '[', ' '), '\\', ' '), ']', ' '), '^', ' '), '_', ' '), '`', ' '), '{', ' '), '|', ' '), '}', ' '), '~', ' '),\n  '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),' ')",
+                            "type": "Compose"
+                          },
+                          "Candidate_Subject_Words": {
+                            "runAfter": {
+                              "Filter_Subject_Words": [
+                                "Succeeded"
+                              ]
+                            },
+                            "type": "Compose",
+                            "inputs": "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)"
+                          }
+                        }
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "runAfter": {
+                        "Get_Reg_Ex_Match_Type": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "Get_Reg_Ex_Match_Type": {
+                      "runAfter": {
+                        "Get_Reg_Ex_Match_All_Subject": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "Compose",
+                      "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@empty(outputs('Get_Email_Subject'))",
+                          "@false"
+                        ]
+                      },
+                      {
+                        "not": {
+                          "equals": [
+                            "@outputs('Get_Email_Subject')",
+                            "@null"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "runAfter": {
+                    "If_Has_Attachments": [
+                      "Succeeded",
+                      "Failed"
+                    ]
+                  },
+                  "type": "If"
+                }
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "not": {
+                      "equals": [
+                        "@outputs('Get_OData_ID')",
+                        ""
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "equals": [
+                        "@outputs('Get_OData_ID')",
+                        "@null"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "runAfter": {
+                "Get_OData_ID": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            },
             "Get_Message_JSON": {
               "inputs": "@decodeBase64(triggerBody()?['ContentData'])",
               "runAfter": {},
+              "type": "Compose"
+            },
+            "Get_OData_ID": {
+              "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']",
+              "metadata": {
+                "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+              },
+              "runAfter": {
+                "Get_Message_ID": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose"
+            },
+            "Get_Message_ID": {
+              "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['Id']",
+              "metadata": {
+                "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
+              },
+              "runAfter": {
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
+              },
               "type": "Compose"
             }
           }
         },
         "Complete_the_message_in_a_queue": {
-          "type": "ApiConnection",
           "runAfter": {
             "Process_Message": [
               "Succeeded"
             ]
           },
+          "type": "ApiConnection",
           "inputs": {
+            "method": "delete",
             "host": {
               "connection": {
                 "name": "@parameters('$connections')['servicebus']['connectionId']"
               }
             },
             "queries": {
-              "lockToken": "@triggerBody()?['LockToken']",
-              "queueType": "Main"
+              "queueType": "Main",
+              "lockToken": "@triggerBody()?['LockToken']"
             },
-            "method": "delete",
             "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete"
           }
         },
-        "Initialize_variables": {
-          "inputs": {
-            "variables": [
-              {
-                "name": "strRecipients",
-                "type": "string"
+        "If_Message_No_Longer_Exists": {
+          "else": {
+            "actions": {
+              "Abandon_the_message_in_a_queue": {
+                "runAfter": {},
+                "type": "ApiConnection",
+                "inputs": {
+                  "method": "post",
+                  "host": {
+                    "connection": {
+                      "name": "@parameters('$connections')['servicebus']['connectionId']"
+                    }
+                  },
+                  "queries": {
+                    "queueType": "Main",
+                    "lockToken": "@triggerBody()?['LockToken']"
+                  },
+                  "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/abandon"
+                }
               },
+              "Terminate_Failed": {
+                "runAfter": {
+                  "Abandon_the_message_in_a_queue": [
+                    "Succeeded",
+                    "Failed",
+                    "TimedOut"
+                  ]
+                },
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "message": "Message processing failed; message abandoned for redelivery.",
+                    "code": "ProcessingFailed"
+                  }
+                }
+              }
+            }
+          },
+          "runAfter": {
+            "Process_Message": [
+              "Failed",
+              "TimedOut"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "and": [
               {
-                "name": "blnFoundItem",
-                "type": "boolean",
-                "value": false
-              },
-              {
-                "name": "strFoundMatter",
-                "type": "string"
-              },
-              {
-                "name": "arrAttachments",
-                "type": "array"
-              },
-              {
-                "name": "blnKeepProcessing",
-                "type": "boolean",
-                "value": true
-              },
-              {
-                "name": "strCC",
-                "type": "string"
+                "equals": [
+                  "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
+                  404
+                ]
               }
             ]
           },
-          "runAfter": {},
-          "type": "InitializeVariable"
+          "actions": {
+            "Complete_Stale_Notification": {
+              "runAfter": {},
+              "type": "ApiConnection",
+              "inputs": {
+                "method": "delete",
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['servicebus']['connectionId']"
+                  }
+                },
+                "queries": {
+                  "queueType": "Main",
+                  "lockToken": "@triggerBody()?['LockToken']"
+                },
+                "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete"
+              }
+            },
+            "Terminate_Stale_Handled": {
+              "runAfter": {
+                "Complete_Stale_Notification": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Succeeded"
+              }
+            }
+          }
         }
       },
       "contentVersion": "1.0.0.0",
@@ -1172,8 +1172,18 @@
       },
       "triggers": {
         "When_a_message_is_received_in_a_queue_(peek-lock)": {
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 1
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 100
+            }
+          },
           "type": "ApiConnection",
           "inputs": {
+            "method": "get",
             "host": {
               "connection": {
                 "name": "@parameters('$connections')['servicebus']['connectionId']"
@@ -1182,17 +1192,7 @@
             "queries": {
               "queueType": "Main"
             },
-            "method": "get",
             "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/head/peek"
-          },
-          "recurrence": {
-            "frequency": "Minute",
-            "interval": 1
-          },
-          "runtimeConfiguration": {
-            "concurrency": {
-              "runs": 40
-            }
           }
         }
       }
@@ -1372,7 +1372,7 @@
       }
     },
     "provisioningState": "Succeeded",
-    "state": "Disabled",
+    "state": "Enabled",
     "version": "08584153822694023305"
   },
   "tags": {},

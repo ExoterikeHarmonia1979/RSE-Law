@@ -18,6 +18,11 @@ function San([string]$expr) {
   # strip \ / : * ? " < > | -> _   (same chain Create_blob_1 already used)
   $c = $expr
   foreach ($ch in @('\','/',':','*','?','"','<','>','|')) { $c = "replace($c, '$ch', '_')" }
+  # Real subjects arrive with tabs and newlines in them - a forwarded header block
+  # pasted into the subject line. The blob connector rejects those with
+  # 400 InvalidUri, and since the name is deterministic the message then fails
+  # identically on all 10 redeliveries and dead-letters unarchived.
+  foreach ($u in @('%09','%0A','%0D')) { $c = "replace($c, decodeUriComponent('$u'), '_')" }
   $c
 }
 
@@ -26,7 +31,12 @@ $def.triggers = @{
   'When_a_message_is_received_in_a_queue_(peek-lock)' = @{
     type       = 'ApiConnection'
     recurrence = @{ frequency = 'Minute'; interval = 1 }
-    runtimeConfiguration = @{ concurrency = @{ runs = 40 } }
+    # Measured on a ~2,700-message sweep batch: 40 -> ~147 msg/min, 100 -> ~330 msg/min.
+    # 100 costs ~1.2% of runs a lost peek-lock (Service Bus caps lockDuration at
+    # PT5M and the slowest runs exceed it under that much parallelism). Those
+    # messages redeliver and re-archive to the same deterministic blob name, so the
+    # cost is repeated work, not lost mail - worth it for 2.2x throughput.
+    runtimeConfiguration = @{ concurrency = @{ runs = 100 } }
     inputs     = @{
       host    = $SB
       method  = 'get'
@@ -58,8 +68,9 @@ $found.expression = @{
 # cap the stem so a very long subject / attachment name cannot exceed the blob name limit,
 # which would otherwise make that email permanently unarchivable
 function Cap([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, 0, $n), $e)" }
-$emlStem = Cap (San "outputs('Get_Email_Subject')") 180
-$attStem = Cap (San "item()?['Name']") 180
+# trim last: capping at 180 can itself leave trailing whitespace on the stem
+$emlStem = "trim(" + (Cap (San "outputs('Get_Email_Subject')") 180) + ")"
+$attStem = "trim(" + (Cap (San "item()?['Name']") 180) + ")"
 
 $found.actions = @{
   Email_Blob_Name = @{
@@ -362,6 +373,10 @@ $def.actions = @{
 $keep = @('servicebus','azureblob-1','sharepointonline')
 $conns = $res.properties.parameters.'$connections'.value
 foreach ($n in @($conns.Keys)) { if ($n -notin $keep) { $conns.Remove($n) | Out-Null } }
+
+# before.json was captured while the workflow was disabled, and a PUT is a full
+# replace - carrying that state through silently disables production on deploy.
+$res.properties.state = 'Enabled'
 
 # emit definition-only payload for PUT
 $res | ConvertTo-Json -Depth 100 | Set-Content $OutPath -Encoding utf8

@@ -38,7 +38,7 @@ Deploy with a PUT that includes `identity` — omitting it strips the managed id
 ## What it does
 
 ```
-peek-lock trigger (concurrency 40)
+peek-lock trigger (concurrency 100)
 └ Process_Message (scope)
     ├ decode Service Bus payload -> Graph message id + OData id
     ├ fetch message, recipients, attachments   (Graph, managed identity)
