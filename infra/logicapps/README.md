@@ -53,6 +53,17 @@ the change into `transform.ps1` or pass `-AcceptDrift` to discard it.
 `deployed.json` is committed on purpose. It is shared state: a baseline only anyone's local
 machine knows about cannot tell you that someone else edited the portal.
 
+`transform.ps1` runs the same check before it overwrites `after.json`, because by the time
+`deploy.ps1` blocks the PUT the generated file already disagrees with live and the reason is
+easy to miss. Pass `-AcceptDrift` to discard the live change, or `-NoDriftCheck` to work with
+no Azure access. The shared logic is in `drift.ps1` — one copy, so the two scripts cannot
+disagree about what counts as an out-of-band edit.
+
+`after.json` is emitted with keys sorted, so regenerating it twice produces identical bytes.
+Without that, `ConvertFrom-Json -AsHashtable` reshuffles keys on every run and a one-line
+change arrives as ~538 changed lines — which is how a live-vs-repo difference gets through a
+review unnoticed.
+
 ## What it does
 
 ```

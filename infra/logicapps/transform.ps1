@@ -3,9 +3,41 @@
 # keep blob archiving + matter lookups, fix correctness bugs, add peek-lock durability.
 param(
   [string]$InPath  = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.before.json",
-  [string]$OutPath = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.after.json"
+  [string]$OutPath = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.after.json",
+  # Regenerate even though the live workflow has been edited outside this repo.
+  # Only correct once whatever changed live is also expressed below.
+  [switch]$AcceptDrift,
+  # Skip the drift check entirely - for working with no Azure access.
+  [switch]$NoDriftCheck,
+  [string]$BaselinePath = "$PSScriptRoot\deployed.json"
 )
 $ErrorActionPreference = 'Stop'
+
+# ------------------------------------------------------------------ guard
+# This script regenerates after.json from a frozen snapshot plus the edits below.
+# If someone changed the live workflow in the portal, that change exists in neither,
+# so overwriting after.json here is the first step in silently reverting it - the
+# concurrency 100-vs-40 drift is exactly this. deploy.ps1 blocks the PUT, but by then
+# the generated file already disagrees with live and the reason is easy to miss.
+# Stop at the source instead.
+# dot-sourced unconditionally: it only defines functions, and Sort-JsonKeys is needed
+# on the emit path even when the drift check is skipped
+. "$PSScriptRoot\drift.ps1"
+if (-not $NoDriftCheck) {
+  $guard = Test-WorkflowDrift -BaselinePath $BaselinePath
+  if (-not $guard.Checked) {
+    Write-Warning "drift not checked - $($guard.Reason). Regenerating anyway; verify with ./deploy.ps1 before deploying."
+  } elseif ($guard.Drift.Count -gt 0) {
+    Write-Host "DRIFT - the live workflow differs from the last deployed baseline in $($guard.Drift.Count) place(s):" -ForegroundColor Yellow
+    $guard.Drift | ForEach-Object { Write-Host "  $_" }
+    Write-Host ""
+    if (-not $AcceptDrift) {
+      throw "refusing to regenerate $([IO.Path]::GetFileName($OutPath)) while live has drifted. " +
+            "Express the live change in this script first, or re-run with -AcceptDrift to discard it."
+    }
+    Write-Warning '-AcceptDrift given: the live-only changes above will be discarded on the next deploy.'
+  }
+}
 
 $res = Get-Content $InPath -Raw | ConvertFrom-Json -AsHashtable
 $def = $res.properties.definition
@@ -397,7 +429,8 @@ foreach ($n in @($conns.Keys)) { if ($n -notin $keep) { $conns.Remove($n) | Out-
 # replace - carrying that state through silently disables production on deploy.
 $res.properties.state = 'Enabled'
 
-# emit definition-only payload for PUT
-$res | ConvertTo-Json -Depth 100 | Set-Content $OutPath -Encoding utf8
+# emit definition-only payload for PUT, key-sorted so regenerating is byte-stable and
+# the diff shows only what actually changed
+Sort-JsonKeys $res | ConvertTo-Json -Depth 100 | Set-Content $OutPath -Encoding utf8
 Write-Host "wrote $OutPath"
 
