@@ -1,0 +1,53 @@
+{
+  "kind": "V1",
+  "properties": {
+    "displayName": "SharePoint@rse-law.com",
+    "connectionId": "f4148ebad7124ab6bee4c00a696677ff",
+    "authenticatedUser": {
+      "name": "SharePoint@rse-law.com"
+    },
+    "overallStatus": "Connected",
+    "statuses": [
+      {
+        "status": "Connected"
+      }
+    ],
+    "connectionState": "Enabled",
+    "customParameterValues": {},
+    "nonSecretParameterValues": {},
+    "createdTime": "2026-04-01T04:34:04.953245Z",
+    "changedTime": "2026-08-08T21:13:49.1711941Z",
+    "api": {
+      "name": "office365",
+      "displayName": "Office 365 Outlook",
+      "description": "Microsoft Office 365 is a cloud-based service that is designed to help meet your organization's needs for robust security, reliability, and user productivity.",
+      "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/office365/icon.png",
+      "brandColor": "#0078D4",
+      "category": "Standard",
+      "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/office365",
+      "type": "Microsoft.Web/locations/managedApis"
+    },
+    "testLinks": [
+      {
+        "requestUri": "https://management.azure.com:443/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/office365/extensions/proxy/testconnection?api-version=2016-06-01",
+        "method": "get"
+      }
+    ],
+    "testRequests": [
+      {
+        "body": {
+          "request": {
+            "method": "get",
+            "path": "testconnection"
+          }
+        },
+        "requestUri": "https://management.azure.com:443/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/office365/dynamicInvoke?api-version=2016-06-01",
+        "method": "POST"
+      }
+    ]
+  },
+  "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/office365",
+  "name": "office365",
+  "type": "Microsoft.Web/connections",
+  "location": "eastus"
+}
