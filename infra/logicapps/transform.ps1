@@ -22,7 +22,12 @@ function San([string]$expr) {
   # pasted into the subject line. The blob connector rejects those with
   # 400 InvalidUri, and since the name is deterministic the message then fails
   # identically on all 10 redeliveries and dead-letters unarchived.
-  foreach ($u in @('%09','%0A','%0D')) { $c = "replace($c, decodeUriComponent('$u'), '_')" }
+  #
+  # Blob storage rejects the whole C0 range and DEL, not only the tab/CR/LF actually
+  # observed, so cover all of it rather than wait for the next variant to strand mail.
+  # Written as %XX escapes so the emitted definition stays printable ASCII - the
+  # control character only ever exists at runtime.
+  foreach ($n in @(0..31) + 127) { $c = "replace($c, decodeUriComponent('%{0:X2}'), '_')" -f $n }
   $c
 }
 
@@ -68,14 +73,22 @@ $found.expression = @{
 # cap the stem so a very long subject / attachment name cannot exceed the blob name limit,
 # which would otherwise make that email permanently unarchivable
 function Cap([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, 0, $n), $e)" }
+# Cap inlines its argument three times, so the 42-replace sanitising chain is composed
+# once into its own action and capped by reference. Inlining it would emit ~126 nested
+# replace() calls per name and make the definition unreadable for no benefit.
 # trim last: capping at 180 can itself leave trailing whitespace on the stem
-$emlStem = "trim(" + (Cap (San "outputs('Get_Email_Subject')") 180) + ")"
-$attStem = "trim(" + (Cap (San "item()?['Name']") 180) + ")"
+$emlStem = "trim(" + (Cap "outputs('Email_Subject_Clean')" 180) + ")"
+$attStem = "trim(" + (Cap "outputs('Attachment_Name_Clean')" 180) + ")"
 
 $found.actions = @{
-  Email_Blob_Name = @{
+  Email_Subject_Clean = @{
     type = 'Compose'
     runAfter = @{}
+    inputs = "@" + (San "outputs('Get_Email_Subject')")
+  }
+  Email_Blob_Name = @{
+    type = 'Compose'
+    runAfter = @{ Email_Subject_Clean = @('Succeeded') }
     inputs = "@concat($emlStem, '.eml')"
   }
   HTTP_Graph_API_Call_to_Get_Email_Message_Value = @{
@@ -109,9 +122,15 @@ $found.actions = @{
     runAfter = @{ Create_blob_1 = @('Succeeded') }
     runtimeConfiguration = @{ concurrency = @{ repetitions = 4 } }
     actions = @{
+      # per-iteration, so this is the current attachment's name even at repetitions 4
+      Attachment_Name_Clean = @{
+        type = 'Compose'
+        runAfter = @{}
+        inputs = "@" + (San "item()?['Name']")
+      }
       Create_blob_for_Attachment = @{
         type = 'ApiConnection'
-        runAfter = @{}
+        runAfter = @{ Attachment_Name_Clean = @('Succeeded') }
         inputs = @{
           host = $BLOB
           method = 'post'
