@@ -1,0 +1,2250 @@
+{
+  "name": "60fe79d3-8ad5-46af-b48b-4beef1b89e6c",
+  "id": "/providers/Microsoft.ProcessSimple/environments/Default-29b31beb-399c-4432-aa07-9258f6e46620/flows/60fe79d3-8ad5-46af-b48b-4beef1b89e6c",
+  "type": "Microsoft.ProcessSimple/environments/flows",
+  "properties": {
+    "apiId": "/providers/Microsoft.PowerApps/apis/shared_logicflows",
+    "displayName": "HTTP Matter On Email Receipt",
+    "userType": "Owner",
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        },
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "When_a_message_is_received_in_a_queue_(auto-complete)": {
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 1
+          },
+          "evaluatedRecurrence": {
+            "frequency": "Minute",
+            "interval": 1
+          },
+          "metadata": {
+            "operationMetadataId": "44692b2d-9fd7-4068-8be1-98698c8c97ad"
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "parameters": {
+              "queueName": "speventgridqueue",
+              "queueType": "Main"
+            },
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_servicebus",
+              "connectionName": "shared_servicebus-2",
+              "operationId": "GetMessageFromQueue"
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        }
+      },
+      "actions": {
+        "Get_Message_JSON": {
+          "runAfter": {
+            "Initialize_variable_strFoundMatter": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "db4636a6-9731-4b08-b8cf-7391bdf65ff5"
+          },
+          "type": "Compose",
+          "inputs": "@decodeBase64(triggerOutputs()?['body/ContentData'])\r\n "
+        },
+        "Parse_JSON": {
+          "runAfter": {
+            "Get_Message_JSON": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "1b049662-e3a7-473b-97dc-9d9911175ea9"
+          },
+          "type": "ParseJson",
+          "inputs": {
+            "content": "@outputs('Get_Message_JSON')",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "specversion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "time": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "datacontenttype": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "SubscriptionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "SubscriptionExpirationDateTime": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "ChangeType": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "Resource": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "ResourceData": {
+                      "type": "object",
+                      "properties": {
+                        "@@odata.type": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "@@odata.id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "@@odata.etag": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "Id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    },
+                    "clientState": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "tenantId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Get_Message_ID": {
+          "runAfter": {
+            "HTTP_Get_Access_Token": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
+          },
+          "type": "Compose",
+          "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['Id']"
+        },
+        "Initialize_variable_arrSubject": {
+          "runAfter": {},
+          "metadata": {
+            "operationMetadataId": "b61adf78-9f55-4555-9007-2a79d1c0a725"
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "arrSubject",
+                "type": "array"
+              }
+            ]
+          }
+        },
+        "Initialize_variable_strFoundMatter": {
+          "runAfter": {
+            "Initialize_variable_blnFoundItem": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "230934fb-3a69-4533-bbc4-0df7a4263969"
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "strFoundMatter",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "HTTP_Get_Access_Token": {
+          "runAfter": {
+            "Parse_JSON": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "9b043670-14f9-45d6-8ae7-b8dd1262e21d"
+          },
+          "type": "Http",
+          "inputs": {
+            "uri": "https://login.microsoftonline.com/29b31beb-399c-4432-aa07-9258f6e46620/oauth2/v2.0/token",
+            "method": "POST",
+            "headers": {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            "body": "client_id=43248a7a-1c76-40fd-91b6-57ec5f08639e&client_secret=REDACTED-SEE-KEY-VAULT&scope=https://graph.microsoft.com/.default&grant_type=client_credentials\n"
+          },
+          "runtimeConfiguration": {
+            "contentTransfer": {
+              "transferMode": "Chunked"
+            }
+          }
+        },
+        "Initialize_variable_strRecipients": {
+          "runAfter": {
+            "Initialize_variable_arrSubject": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "0ca217f7-b269-4071-bb20-adc1cca04c7f"
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "strRecipients",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "If_Odata_ID_is_valid": {
+          "actions": {
+            "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": {
+              "metadata": {
+                "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+              },
+              "type": "Http",
+              "inputs": {
+                "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}",
+                "method": "GET",
+                "headers": {
+                  "Authorization": "Bearer @{body('HTTP_Get_Access_Token')?['access_token']}"
+                }
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            },
+            "Get_Email_Subject": {
+              "runAfter": {
+                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
+              },
+              "type": "Compose",
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['subject']"
+            },
+            "Compose_Error_Get_Email_via_User_ID": {
+              "runAfter": {
+                "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                  "Failed"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "a968906f-3249-446e-98a0-cee49eac566c"
+              },
+              "type": "Compose",
+              "inputs": "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']"
+            },
+            "Get_Email_Body_Content": {
+              "runAfter": {
+                "Get_Email_Subject": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "e46a9773-77d6-4912-bc1a-71b6ca7ba856"
+              },
+              "type": "Compose",
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['body']?['content']"
+            },
+            "Get_Email_From": {
+              "runAfter": {
+                "Get_Email_Body_Content": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
+              },
+              "type": "Compose",
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['from']?['emailAddress']?['address']"
+            },
+            "Apply_to_each_Recipient": {
+              "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['toRecipients']",
+              "actions": {
+                "Append_to_string_variable": {
+                  "metadata": {
+                    "operationMetadataId": "b4a3650e-2efc-4e45-8187-cabf1b086969"
+                  },
+                  "type": "AppendToStringVariable",
+                  "inputs": {
+                    "name": "strRecipients",
+                    "value": "@concat(item()?['emailAddress']?['address'],';')\r\n"
+                  }
+                }
+              },
+              "runAfter": {
+                "Get_Email_From": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "7a63a0d0-f844-4549-86d1-a08cabb62545"
+              },
+              "type": "Foreach"
+            },
+            "Get_Email_To": {
+              "runAfter": {
+                "Apply_to_each_Recipient": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
+              },
+              "type": "Compose",
+              "inputs": "@variables('strRecipients')"
+            },
+            "Get_Email_Has_Attachments": {
+              "runAfter": {
+                "Get_Email_To": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
+              },
+              "type": "Compose",
+              "inputs": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['hasAttachments']"
+            },
+            "HTTP_Az_Func_Reg_Matter_Full_Subject": {
+              "runAfter": {
+                "Get_Email_Has_Attachments": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "a31de066-e100-495e-be4c-cfdccbc84079"
+              },
+              "type": "Http",
+              "inputs": {
+                "uri": "https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc",
+                "method": "POST",
+                "headers": {
+                  "Accept": "application/json"
+                },
+                "body": {
+                  "strData": "@{outputs('Get_Email_Subject')}"
+                }
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            },
+            "Get_Reg_Ex_Match_All_Subject": {
+              "runAfter": {
+                "HTTP_Az_Func_Reg_Matter_Full_Subject": [
+                  "Succeeded",
+                  "Failed"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject')?['match']"
+            },
+            "If_Subject_has_Reg_Ex_Match_": {
+              "actions": {
+                "Get_items_In_LookUp_List": {
+                  "metadata": {
+                    "operationMetadataId": "3c5f01d5-9af8-452a-8799-fa8a4f690e50"
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "parameters": {
+                      "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+                      "table": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+                      "$filter": "RSEFileNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or ArbitrationCaseNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or CaseNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}' or ClaimNo eq '@{outputs('Get_Reg_Ex_Match_All_Subject')}'"
+                    },
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "GetItems"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "If_Found_Item_in_List": {
+                  "actions": {
+                    "Set_variable_blnFoundItem": {
+                      "metadata": {
+                        "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+                      },
+                      "type": "SetVariable",
+                      "inputs": {
+                        "name": "blnFoundItem",
+                        "value": true
+                      }
+                    },
+                    "For_each_4": {
+                      "foreach": "@outputs('Get_items_In_LookUp_List')?['body/value']",
+                      "actions": {
+                        "Set_variable_strFoundMatter": {
+                          "metadata": {
+                            "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+                          },
+                          "type": "SetVariable",
+                          "inputs": {
+                            "name": "strFoundMatter",
+                            "value": "@outputs('Get_items_In_LookUp_List')?['body/value'][0]?['RSEFileNo']"
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Set_variable_blnFoundItem": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "749edf4b-52a4-4ed0-a9ad-f284ef56b776"
+                      },
+                      "type": "Foreach"
+                    }
+                  },
+                  "runAfter": {
+                    "Get_items_In_LookUp_List": [
+                      "Succeeded",
+                      "Failed"
+                    ]
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "not": {
+                          "equals": [
+                            "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
+                            0
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "metadata": {
+                    "operationMetadataId": "0c9a3ce4-c48e-45f6-af41-47829ebcb8ee"
+                  },
+                  "type": "If"
+                }
+              },
+              "runAfter": {
+                "Get_Reg_Ex_Match_All_Subject": [
+                  "Succeeded"
+                ]
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "not": {
+                      "equals": [
+                        "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                        ""
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "equals": [
+                        "@outputs('Get_Reg_Ex_Match_All_Subject')",
+                        "@null"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "4cd4e6d2-dd24-495f-a821-1fcffd180e14"
+              },
+              "type": "If"
+            },
+            "Condition": {
+              "actions": {
+                "Set_arrSubject_variable_to_array_of_message_subject": {
+                  "metadata": {
+                    "operationMetadataId": "fe3d092d-f992-4dbe-b006-b3aa689a4251"
+                  },
+                  "type": "SetVariable",
+                  "inputs": {
+                    "name": "arrSubject",
+                    "value": "@split(outputs('Get_Email_Subject'),' ')"
+                  }
+                },
+                "Apply_to_each": {
+                  "foreach": "@variables('arrSubject')",
+                  "actions": {
+                    "HTTP_Az_Func_Reg_RSE_File_No": {
+                      "metadata": {
+                        "operationMetadataId": "a31de066-e100-495e-be4c-cfdccbc84079"
+                      },
+                      "type": "Http",
+                      "inputs": {
+                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExAzFunc",
+                        "method": "POST",
+                        "headers": {
+                          "Accept": "application/json"
+                        },
+                        "body": {
+                          "strData": "@{item()}",
+                          "regEx": "^\\d{2,3}(\\.\\d{3})?$"
+                        }
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    },
+                    "Get_Match_Value_RSE_File_No": {
+                      "runAfter": {
+                        "HTTP_Az_Func_Reg_RSE_File_No": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "4aa31661-76ad-4dcf-8c51-645b75a79084"
+                      },
+                      "type": "Compose",
+                      "inputs": "@body('HTTP_Az_Func_Reg_RSE_File_No')?['match']"
+                    },
+                    "If_Passes_RegEx_RSE_File_No": {
+                      "actions": {
+                        "Get_items_In_LookUp_List_RSE_File_No": {
+                          "metadata": {
+                            "operationMetadataId": "3c5f01d5-9af8-452a-8799-fa8a4f690e50"
+                          },
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "parameters": {
+                              "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+                              "table": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+                              "$filter": "RSEFileNo eq '@{item()}' or ArbitrationCaseNo eq '@{item()}' or CaseNo eq '@{item()}' or ClaimNo eq '@{item()}'"
+                            },
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        },
+                        "If_Found_Item": {
+                          "actions": {
+                            "Set_variable_blnFoundItem_RSE_File_No": {
+                              "metadata": {
+                                "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+                              },
+                              "type": "SetVariable",
+                              "inputs": {
+                                "name": "blnFoundItem",
+                                "value": true
+                              }
+                            },
+                            "For_each_1": {
+                              "foreach": "@outputs('Get_items_In_LookUp_List_RSE_File_No')?['body/value']",
+                              "actions": {
+                                "Set_variable_strFoundMatter_RSE_File_No": {
+                                  "metadata": {
+                                    "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+                                  },
+                                  "type": "SetVariable",
+                                  "inputs": {
+                                    "name": "strFoundMatter",
+                                    "value": "@outputs('Get_items_In_LookUp_List_RSE_File_No')?['body/value'][0]?['RSEFileNo']"
+                                  }
+                                }
+                              },
+                              "runAfter": {
+                                "Set_variable_blnFoundItem_RSE_File_No": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "749edf4b-52a4-4ed0-a9ad-f284ef56b776"
+                              },
+                              "type": "Foreach"
+                            }
+                          },
+                          "runAfter": {
+                            "Get_items_In_LookUp_List_RSE_File_No": [
+                              "Succeeded",
+                              "Failed"
+                            ]
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_List_RSE_File_No')?['body/value'])",
+                                    0
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "metadata": {
+                            "operationMetadataId": "0c9a3ce4-c48e-45f6-af41-47829ebcb8ee"
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Match_Value_RSE_File_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_RSE_File_No')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_RSE_File_No')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "4cd4e6d2-dd24-495f-a821-1fcffd180e14"
+                      },
+                      "type": "If"
+                    },
+                    "If_BlnFoundItem_true": {
+                      "actions": {
+                        "If_Found_Matter_=_\"06.092\"": {
+                          "actions": {
+                            "Export_email_(V2)": {
+                              "metadata": {
+                                "operationMetadataId": "e307b7bf-be9e-42a4-920c-3c3ad1a9bbe5"
+                              },
+                              "type": "OpenApiConnection",
+                              "inputs": {
+                                "parameters": {
+                                  "messageId": "@outputs('Get_Message_ID')"
+                                },
+                                "host": {
+                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                                  "connectionName": "shared_office365",
+                                  "operationId": "ExportEmail_V2"
+                                },
+                                "authentication": "@parameters('$authentication')"
+                              }
+                            },
+                            "Create_file": {
+                              "runAfter": {
+                                "Export_email_(V2)": [
+                                  "Succeeded",
+                                  "Failed"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "fcf47783-2497-4e87-8592-72bff3b4fe4a"
+                              },
+                              "type": "OpenApiConnection",
+                              "inputs": {
+                                "parameters": {
+                                  "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+                                  "folderPath": "/Shared Documents",
+                                  "name": "@concat(outputs('Get_Email_Subject'),'.msg')",
+                                  "body": "@body('Export_email_(V2)')"
+                                },
+                                "host": {
+                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                                  "connectionName": "shared_sharepointonline",
+                                  "operationId": "CreateFile"
+                                },
+                                "authentication": "@parameters('$authentication')"
+                              },
+                              "runtimeConfiguration": {
+                                "contentTransfer": {
+                                  "transferMode": "Chunked"
+                                }
+                              }
+                            },
+                            "For_each": {
+                              "foreach": "@outputs('Get_Email_Subject')",
+                              "actions": {
+                                "Update_item": {
+                                  "metadata": {
+                                    "operationMetadataId": "3004c019-6661-48d7-a9a4-b3a40b1ea7e6"
+                                  },
+                                  "type": "OpenApiConnection",
+                                  "inputs": {
+                                    "parameters": {
+                                      "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+                                      "table": "Documents",
+                                      "id": "@outputs('Create_file')?['body/ItemId']",
+                                      "item/Title": "@{outputs('Get_Email_Subject')} @{utcNow()}",
+                                      "item/To": "@outputs('Get_Email_To')",
+                                      "item/From": "@outputs('Get_Email_From')",
+                                      "item/Body": "@outputs('Get_Email_Body_Content')",
+                                      "item/Subject": "@outputs('Get_Email_Subject')",
+                                      "item/HasAttachment": "@outputs('Get_Email_Has_Attachments')"
+                                    },
+                                    "host": {
+                                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                                      "connectionName": "shared_sharepointonline",
+                                      "operationId": "PatchItem"
+                                    },
+                                    "authentication": "@parameters('$authentication')"
+                                  }
+                                }
+                              },
+                              "runAfter": {
+                                "Create_file": [
+                                  "Succeeded",
+                                  "Failed"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "0298972c-1713-4e8e-a58a-c95e8c00eeeb"
+                              },
+                              "type": "Foreach"
+                            }
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "equals": [
+                                  "@variables('strFoundMatter')",
+                                  "06.092"
+                                ]
+                              }
+                            ]
+                          },
+                          "metadata": {
+                            "operationMetadataId": "e5aed12d-0c0f-4df9-a262-7f4df2421170"
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "runAfter": {
+                        "If_Passes_RegEx_Claim_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@variables('blnFoundItem')",
+                              "@true"
+                            ]
+                          }
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "7f6dd7d2-3504-474a-89ea-080f05735ddb"
+                      },
+                      "type": "If"
+                    },
+                    "HTTP_Az_Func_Reg_Ex_Arbitration_Case_No": {
+                      "runAfter": {
+                        "If_Passes_RegEx_RSE_File_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "c395645a-9ff8-4179-bfca-4310a0847fbd"
+                      },
+                      "type": "Http",
+                      "inputs": {
+                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExAzFunc",
+                        "method": "POST",
+                        "headers": {
+                          "Accept": "application/json"
+                        },
+                        "body": {
+                          "strData": "@{item()}",
+                          "regEx": "[a-zA-Z0-9]{5}"
+                        }
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    },
+                    "HTTP_Az_Func_Reg_Ex_Case_No": {
+                      "runAfter": {
+                        "If_Passes_RegEx_Arbitration_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "5b937999-5a2e-4995-be2d-94595c2f969a"
+                      },
+                      "type": "Http",
+                      "inputs": {
+                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExAzFunc",
+                        "method": "POST",
+                        "headers": {
+                          "Accept": "application/json"
+                        },
+                        "body": {
+                          "strData": "@{item()}",
+                          "regEx": "\\d{2}-\\d{4}-\\d{8}-[A-Z]{2}-[A-Z]{2}-[A-Z]{2,3}"
+                        }
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    },
+                    "HTTP_Az_Func_Reg_Claim_No": {
+                      "runAfter": {
+                        "If_Passes_RegEx_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "627311e9-a2ce-4a10-81b2-7b0b7850fb8d"
+                      },
+                      "type": "Http",
+                      "inputs": {
+                        "uri": "https://regexazfunc.azurewebsites.net/api/RegExAzFunc",
+                        "method": "POST",
+                        "headers": {
+                          "Accept": "application/json"
+                        },
+                        "body": {
+                          "strData": "@{item()}",
+                          "regEx": "\\d{2}-\\d{7}"
+                        }
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    },
+                    "Get_Match_Value_Arbitration_Case_No": {
+                      "runAfter": {
+                        "HTTP_Az_Func_Reg_Ex_Arbitration_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "ec0d3bab-6a50-4fcd-9d10-b8305e31b667"
+                      },
+                      "type": "Compose",
+                      "inputs": "@body('HTTP_Az_Func_Reg_Ex_Arbitration_Case_No')?['match']"
+                    },
+                    "Get_Match_Value_Case_No": {
+                      "runAfter": {
+                        "HTTP_Az_Func_Reg_Ex_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "f70dd732-f440-47c8-b5bd-e832cb19f5de"
+                      },
+                      "type": "Compose",
+                      "inputs": "@body('HTTP_Az_Func_Reg_Ex_Case_No')?['match']"
+                    },
+                    "Get_Match_Value_Claim_No": {
+                      "runAfter": {
+                        "HTTP_Az_Func_Reg_Claim_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "72fffb19-e5a0-482d-bd5b-f3aed112d5b6"
+                      },
+                      "type": "Compose",
+                      "inputs": "@body('HTTP_Az_Func_Reg_Claim_No')?['match']"
+                    },
+                    "If_Passes_RegEx_Arbitration_Case_No": {
+                      "actions": {
+                        "Get_items_In_LookUp_Arbitration_Case_No": {
+                          "metadata": {
+                            "operationMetadataId": "b8be1998-ab88-48b9-a32c-b0606291f1b7"
+                          },
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "parameters": {
+                              "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+                              "table": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+                              "$filter": "RSEFileNo eq '@{item()}' or ArbitrationCaseNo eq '@{item()}' or CaseNo eq '@{item()}' or ClaimNo eq '@{item()}'"
+                            },
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        },
+                        "If_Found_Item_Arbitration_Case_No": {
+                          "actions": {
+                            "Set_variable_blnFoundItem_Arbitration_Case_No": {
+                              "metadata": {
+                                "operationMetadataId": "b021853a-4256-46b6-9456-bf260e285687"
+                              },
+                              "type": "SetVariable",
+                              "inputs": {
+                                "name": "blnFoundItem",
+                                "value": true
+                              }
+                            },
+                            "For_each_3": {
+                              "foreach": "@outputs('Get_items_In_LookUp_Arbitration_Case_No')?['body/value']",
+                              "actions": {
+                                "Set_variable_strFoundMatter_Arbitration_Case_No": {
+                                  "metadata": {
+                                    "operationMetadataId": "3b3433bc-553d-4e7e-a7d5-4160cd1fa3b3"
+                                  },
+                                  "type": "SetVariable",
+                                  "inputs": {
+                                    "name": "strFoundMatter",
+                                    "value": "@outputs('Get_items_In_LookUp_Arbitration_Case_No')?['body/value'][0]?['ArbitrationCaseNo']"
+                                  }
+                                }
+                              },
+                              "runAfter": {
+                                "Set_variable_blnFoundItem_Arbitration_Case_No": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "9840e10a-50f3-4cfe-9441-d3f4e94e3b3f"
+                              },
+                              "type": "Foreach"
+                            }
+                          },
+                          "runAfter": {
+                            "Get_items_In_LookUp_Arbitration_Case_No": [
+                              "Succeeded",
+                              "Failed"
+                            ]
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_Arbitration_Case_No')?['body/value'])",
+                                    0
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "metadata": {
+                            "operationMetadataId": "69102f9e-91e6-412e-abf7-e66671c98238"
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Match_Value_Arbitration_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Arbitration_Case_No')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Arbitration_Case_No')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "402ebc2e-cff2-4b3a-9c67-2a0ba6794bd9"
+                      },
+                      "type": "If"
+                    },
+                    "If_Passes_RegEx_Case_No": {
+                      "actions": {
+                        "Get_items_In_LookUp_List_Case_No": {
+                          "metadata": {
+                            "operationMetadataId": "7aaa8242-4537-47af-8022-598276b2041c"
+                          },
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "parameters": {
+                              "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+                              "table": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+                              "$filter": "RSEFileNo eq '@{item()}' or ArbitrationCaseNo eq '@{item()}' or CaseNo eq '@{item()}' or ClaimNo eq '@{item()}'"
+                            },
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        },
+                        "If_Found_Item_Case_No": {
+                          "actions": {
+                            "Set_variable_blnFoundItem_Case_No": {
+                              "metadata": {
+                                "operationMetadataId": "34226602-e304-4b6b-aa8b-cb21d11371cf"
+                              },
+                              "type": "SetVariable",
+                              "inputs": {
+                                "name": "blnFoundItem",
+                                "value": true
+                              }
+                            },
+                            "For_each_2": {
+                              "foreach": "@outputs('Get_items_In_LookUp_List_Case_No')?['body/value']",
+                              "actions": {
+                                "Set_variable_strFoundMatter_Case_No": {
+                                  "metadata": {
+                                    "operationMetadataId": "a5e7d6ef-5116-428a-a751-9cbf96c6d783"
+                                  },
+                                  "type": "SetVariable",
+                                  "inputs": {
+                                    "name": "strFoundMatter",
+                                    "value": "@outputs('Get_items_In_LookUp_List_Case_No')?['body/value'][0]?['CaseNo']"
+                                  }
+                                }
+                              },
+                              "runAfter": {
+                                "Set_variable_blnFoundItem_Case_No": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "1cfc147f-49b6-4fa6-8ec0-ce69fe3ac27d"
+                              },
+                              "type": "Foreach"
+                            }
+                          },
+                          "runAfter": {
+                            "Get_items_In_LookUp_List_Case_No": [
+                              "Succeeded",
+                              "Failed"
+                            ]
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_List_Case_No')?['body/value'])",
+                                    0
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "metadata": {
+                            "operationMetadataId": "97c7af64-20ff-4d62-8e13-7bce350e6758"
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Match_Value_Case_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Case_No')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Case_No')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "096e7e0a-6f0b-4689-8706-750a8cc5d99c"
+                      },
+                      "type": "If"
+                    },
+                    "If_Passes_RegEx_Claim_No": {
+                      "actions": {
+                        "Get_items_In_LookUp_List_Claim_No": {
+                          "metadata": {
+                            "operationMetadataId": "40d41127-4589-4e4f-8aee-4013967a53fb"
+                          },
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "parameters": {
+                              "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+                              "table": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+                              "$filter": "RSEFileNo eq '@{item()}' or ArbitrationCaseNo eq '@{item()}' or CaseNo eq '@{item()}' or ClaimNo eq '@{item()}'"
+                            },
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        },
+                        "If_Found_Item_Claim_No": {
+                          "actions": {
+                            "Set_variable_blnFoundItem_Claim_No": {
+                              "metadata": {
+                                "operationMetadataId": "f2af329b-5f8c-41c4-88da-c2d06b15ac9c"
+                              },
+                              "type": "SetVariable",
+                              "inputs": {
+                                "name": "blnFoundItem",
+                                "value": true
+                              }
+                            },
+                            "For_each_Claim_No": {
+                              "foreach": "@outputs('Get_items_In_LookUp_List_Claim_No')?['body/value']",
+                              "actions": {
+                                "Set_variable_strFoundMatter_Claim_No": {
+                                  "metadata": {
+                                    "operationMetadataId": "b7afc17c-d6c4-4dd8-a758-ecc07124f87d"
+                                  },
+                                  "type": "SetVariable",
+                                  "inputs": {
+                                    "name": "strFoundMatter",
+                                    "value": "@outputs('Get_items_In_LookUp_List_Claim_No')?['body/value'][0]?['ClaimNo']"
+                                  }
+                                }
+                              },
+                              "runAfter": {
+                                "Set_variable_blnFoundItem_Claim_No": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "metadata": {
+                                "operationMetadataId": "e01d8c57-16fc-4ac3-bf1d-d3ac7c6b6e87"
+                              },
+                              "type": "Foreach"
+                            }
+                          },
+                          "runAfter": {
+                            "Get_items_In_LookUp_List_Claim_No": [
+                              "Succeeded",
+                              "Failed"
+                            ]
+                          },
+                          "else": {
+                            "actions": {}
+                          },
+                          "expression": {
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_List_Claim_No')?['body/value'])",
+                                    0
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "metadata": {
+                            "operationMetadataId": "90c1843d-c8ef-461c-928a-09d13f9d6c14"
+                          },
+                          "type": "If"
+                        }
+                      },
+                      "runAfter": {
+                        "Get_Match_Value_Claim_No": [
+                          "Succeeded"
+                        ]
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Claim_No')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@outputs('Get_Match_Value_Claim_No')",
+                                "@null"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "107278c7-af6d-4926-8c0e-51c7cc0bb560"
+                      },
+                      "type": "If"
+                    }
+                  },
+                  "runAfter": {
+                    "Set_arrSubject_variable_to_array_of_message_subject": [
+                      "Succeeded"
+                    ]
+                  },
+                  "metadata": {
+                    "operationMetadataId": "ab67ced2-4d7b-42ac-8153-dd8c9962dc81"
+                  },
+                  "type": "Foreach",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 50
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "If_BlnFoundItem": [
+                  "Succeeded"
+                ]
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      2,
+                      1
+                    ]
+                  }
+                ]
+              },
+              "type": "If"
+            },
+            "If_BlnFoundItem": {
+              "actions": {
+                "If_Found_Matter_eq_\"06.092\"": {
+                  "actions": {
+                    "Export_email_(V2)_1": {
+                      "metadata": {
+                        "operationMetadataId": "e307b7bf-be9e-42a4-920c-3c3ad1a9bbe5"
+                      },
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "parameters": {
+                          "messageId": "@outputs('Get_Message_ID')"
+                        },
+                        "host": {
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+                          "connectionName": "shared_office365",
+                          "operationId": "ExportEmail_V2"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      }
+                    },
+                    "Create_file_1": {
+                      "runAfter": {
+                        "Export_email_(V2)_1": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "fcf47783-2497-4e87-8592-72bff3b4fe4a"
+                      },
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "parameters": {
+                          "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+                          "folderPath": "/Shared Documents",
+                          "name": "@concat(outputs('Get_Email_Subject'),'.msg')",
+                          "body": "@body('Export_email_(V2)_1')"
+                        },
+                        "host": {
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "CreateFile"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    },
+                    "For_each_5": {
+                      "foreach": "@outputs('Get_Email_Subject')",
+                      "actions": {
+                        "Update_item_1": {
+                          "metadata": {
+                            "operationMetadataId": "3004c019-6661-48d7-a9a4-b3a40b1ea7e6"
+                          },
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "parameters": {
+                              "dataset": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+                              "table": "Documents",
+                              "id": "@outputs('Create_file_1')?['body/ItemId']",
+                              "item/Title": "@{outputs('Get_Email_Subject')} @{utcNow()}",
+                              "item/To": "@outputs('Get_Email_To')",
+                              "item/From": "@outputs('Get_Email_From')",
+                              "item/Body": "@outputs('Get_Email_Body_Content')",
+                              "item/Subject": "@outputs('Get_Email_Subject')",
+                              "item/HasAttachment": "@outputs('Get_Email_Has_Attachments')"
+                            },
+                            "host": {
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "PatchItem"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Create_file_1": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      },
+                      "metadata": {
+                        "operationMetadataId": "0298972c-1713-4e8e-a58a-c95e8c00eeeb"
+                      },
+                      "type": "Foreach"
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@variables('strFoundMatter')",
+                          "06.092"
+                        ]
+                      }
+                    ]
+                  },
+                  "metadata": {
+                    "operationMetadataId": "e5aed12d-0c0f-4df9-a262-7f4df2421170"
+                  },
+                  "type": "If"
+                }
+              },
+              "runAfter": {
+                "If_Subject_has_Reg_Ex_Match_": [
+                  "Succeeded"
+                ]
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('blnFoundItem')",
+                      "@true"
+                    ]
+                  }
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "7f6dd7d2-3504-474a-89ea-080f05735ddb"
+              },
+              "type": "If"
+            }
+          },
+          "runAfter": {
+            "Get_OData_ID": [
+              "Succeeded",
+              "Failed"
+            ]
+          },
+          "else": {
+            "actions": {}
+          },
+          "expression": {
+            "and": [
+              {
+                "not": {
+                  "equals": [
+                    "@outputs('Get_OData_ID')",
+                    ""
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "equals": [
+                    "@outputs('Get_OData_ID')",
+                    "@null"
+                  ]
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "fd4fcd67-aa17-451e-909c-fa44eab7955f"
+          },
+          "type": "If"
+        },
+        "Initialize_variable_blnFoundItem": {
+          "runAfter": {
+            "Initialize_variable_strRecipients": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "25f5ab61-138e-4f0c-8424-ebcda5374a47"
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "blnFoundItem",
+                "type": "boolean",
+                "value": false
+              }
+            ]
+          }
+        },
+        "Get_OData_ID": {
+          "runAfter": {
+            "Get_Message_ID": [
+              "Succeeded"
+            ]
+          },
+          "metadata": {
+            "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+          },
+          "type": "Compose",
+          "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']"
+        }
+      },
+      "outputs": {}
+    },
+    "state": "Stopped",
+    "connectionReferences": {
+      "shared_servicebus-2": {
+        "connectionName": "shared-servicebus-43449407-31ab-4a93-a068-c141c55ab765",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_servicebus",
+        "displayName": "Service Bus",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1816/1.0.1816.4782/servicebus/icon.png",
+        "brandColor": "",
+        "tier": "Premium",
+        "apiName": "servicebus",
+        "isProcessSimpleApiReferenceConversionAlreadyDone": false
+      },
+      "shared_sharepointonline": {
+        "connectionName": "shared-sharepointonl-33ac11b7-7078-4d6f-94e5-f2a446821f69",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+        "displayName": "SharePoint",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1813/1.0.1813.4769/sharepointonline/icon.png",
+        "brandColor": "",
+        "tier": "Standard",
+        "apiName": "sharepointonline",
+        "isProcessSimpleApiReferenceConversionAlreadyDone": false
+      },
+      "shared_office365": {
+        "connectionName": "shared-office365-c6df2938-b841-4466-a2bf-a7b70cc921d9",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_office365",
+        "displayName": "Office 365 Outlook",
+        "iconUri": "https://static.powerapps.com/resource/ppcr/releases/v1.0.1819/1.0.1819.4795/office365/icon.png",
+        "brandColor": "#0078D4",
+        "tier": "Standard",
+        "apiName": "office365",
+        "isProcessSimpleApiReferenceConversionAlreadyDone": false
+      }
+    },
+    "createdTime": "2026-01-29T02:28:29.2799345Z",
+    "lastModifiedTime": "2026-04-01T01:45:00.5564894Z",
+    "flowSuspensionReason": "None",
+    "flowSuspensionReasonDetails": "",
+    "environment": {
+      "name": "Default-29b31beb-399c-4432-aa07-9258f6e46620",
+      "type": "Microsoft.ProcessSimple/environments",
+      "id": "/providers/Microsoft.ProcessSimple/environments/Default-29b31beb-399c-4432-aa07-9258f6e46620"
+    },
+    "definitionSummary": {
+      "triggers": [
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetMessageFromQueue",
+          "metadata": {
+            "operationMetadataId": "44692b2d-9fd7-4068-8be1-98698c8c97ad"
+          }
+        }
+      ],
+      "actions": [
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "db4636a6-9731-4b08-b8cf-7391bdf65ff5"
+          }
+        },
+        {
+          "type": "ParseJson",
+          "metadata": {
+            "operationMetadataId": "1b049662-e3a7-473b-97dc-9d9911175ea9"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
+          }
+        },
+        {
+          "type": "InitializeVariable",
+          "metadata": {
+            "operationMetadataId": "b61adf78-9f55-4555-9007-2a79d1c0a725"
+          }
+        },
+        {
+          "type": "InitializeVariable",
+          "metadata": {
+            "operationMetadataId": "230934fb-3a69-4533-bbc4-0df7a4263969"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "9b043670-14f9-45d6-8ae7-b8dd1262e21d"
+          }
+        },
+        {
+          "type": "InitializeVariable",
+          "metadata": {
+            "operationMetadataId": "0ca217f7-b269-4071-bb20-adc1cca04c7f"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "fd4fcd67-aa17-451e-909c-fa44eab7955f"
+          }
+        },
+        {
+          "type": "InitializeVariable",
+          "metadata": {
+            "operationMetadataId": "25f5ab61-138e-4f0c-8424-ebcda5374a47"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "7aa6a541-054a-476b-aa39-dca4245440f3"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "a968906f-3249-446e-98a0-cee49eac566c"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "e46a9773-77d6-4912-bc1a-71b6ca7ba856"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "7a63a0d0-f844-4549-86d1-a08cabb62545"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "a31de066-e100-495e-be4c-cfdccbc84079"
+          }
+        },
+        {
+          "type": "Compose"
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "4cd4e6d2-dd24-495f-a821-1fcffd180e14"
+          }
+        },
+        {
+          "type": "If"
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "7f6dd7d2-3504-474a-89ea-080f05735ddb"
+          }
+        },
+        {
+          "type": "AppendToStringVariable",
+          "metadata": {
+            "operationMetadataId": "b4a3650e-2efc-4e45-8187-cabf1b086969"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetItems",
+          "metadata": {
+            "operationMetadataId": "3c5f01d5-9af8-452a-8799-fa8a4f690e50"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "0c9a3ce4-c48e-45f6-af41-47829ebcb8ee"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "fe3d092d-f992-4dbe-b006-b3aa689a4251"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "ab67ced2-4d7b-42ac-8153-dd8c9962dc81"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "e5aed12d-0c0f-4df9-a262-7f4df2421170"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "749edf4b-52a4-4ed0-a9ad-f284ef56b776"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "a31de066-e100-495e-be4c-cfdccbc84079"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "4aa31661-76ad-4dcf-8c51-645b75a79084"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "4cd4e6d2-dd24-495f-a821-1fcffd180e14"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "7f6dd7d2-3504-474a-89ea-080f05735ddb"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "c395645a-9ff8-4179-bfca-4310a0847fbd"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "5b937999-5a2e-4995-be2d-94595c2f969a"
+          }
+        },
+        {
+          "type": "Http",
+          "metadata": {
+            "operationMetadataId": "627311e9-a2ce-4a10-81b2-7b0b7850fb8d"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "ec0d3bab-6a50-4fcd-9d10-b8305e31b667"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "f70dd732-f440-47c8-b5bd-e832cb19f5de"
+          }
+        },
+        {
+          "type": "Compose",
+          "metadata": {
+            "operationMetadataId": "72fffb19-e5a0-482d-bd5b-f3aed112d5b6"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "402ebc2e-cff2-4b3a-9c67-2a0ba6794bd9"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "096e7e0a-6f0b-4689-8706-750a8cc5d99c"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "107278c7-af6d-4926-8c0e-51c7cc0bb560"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "ExportEmail_V2",
+          "metadata": {
+            "operationMetadataId": "e307b7bf-be9e-42a4-920c-3c3ad1a9bbe5"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "CreateFile",
+          "metadata": {
+            "operationMetadataId": "fcf47783-2497-4e87-8592-72bff3b4fe4a"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "0298972c-1713-4e8e-a58a-c95e8c00eeeb"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetItems",
+          "metadata": {
+            "operationMetadataId": "3c5f01d5-9af8-452a-8799-fa8a4f690e50"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "0c9a3ce4-c48e-45f6-af41-47829ebcb8ee"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "e5aed12d-0c0f-4df9-a262-7f4df2421170"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetItems",
+          "metadata": {
+            "operationMetadataId": "b8be1998-ab88-48b9-a32c-b0606291f1b7"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "69102f9e-91e6-412e-abf7-e66671c98238"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetItems",
+          "metadata": {
+            "operationMetadataId": "7aaa8242-4537-47af-8022-598276b2041c"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "97c7af64-20ff-4d62-8e13-7bce350e6758"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "GetItems",
+          "metadata": {
+            "operationMetadataId": "40d41127-4589-4e4f-8aee-4013967a53fb"
+          }
+        },
+        {
+          "type": "If",
+          "metadata": {
+            "operationMetadataId": "90c1843d-c8ef-461c-928a-09d13f9d6c14"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "PatchItem",
+          "metadata": {
+            "operationMetadataId": "3004c019-6661-48d7-a9a4-b3a40b1ea7e6"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "80787733-215a-43eb-a434-eb6438b261e8"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "749edf4b-52a4-4ed0-a9ad-f284ef56b776"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "ExportEmail_V2",
+          "metadata": {
+            "operationMetadataId": "e307b7bf-be9e-42a4-920c-3c3ad1a9bbe5"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "CreateFile",
+          "metadata": {
+            "operationMetadataId": "fcf47783-2497-4e87-8592-72bff3b4fe4a"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "0298972c-1713-4e8e-a58a-c95e8c00eeeb"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "b021853a-4256-46b6-9456-bf260e285687"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "9840e10a-50f3-4cfe-9441-d3f4e94e3b3f"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "34226602-e304-4b6b-aa8b-cb21d11371cf"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "1cfc147f-49b6-4fa6-8ec0-ce69fe3ac27d"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "f2af329b-5f8c-41c4-88da-c2d06b15ac9c"
+          }
+        },
+        {
+          "type": "Foreach",
+          "metadata": {
+            "operationMetadataId": "e01d8c57-16fc-4ac3-bf1d-d3ac7c6b6e87"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
+          }
+        },
+        {
+          "type": "OpenApiConnection",
+          "swaggerOperationId": "PatchItem",
+          "metadata": {
+            "operationMetadataId": "3004c019-6661-48d7-a9a4-b3a40b1ea7e6"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "3b3433bc-553d-4e7e-a7d5-4160cd1fa3b3"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "a5e7d6ef-5116-428a-a751-9cbf96c6d783"
+          }
+        },
+        {
+          "type": "SetVariable",
+          "metadata": {
+            "operationMetadataId": "b7afc17c-d6c4-4dd8-a758-ecc07124f87d"
+          }
+        }
+      ]
+    },
+    "creator": {
+      "tenantId": "29b31beb-399c-4432-aa07-9258f6e46620",
+      "objectId": "504a386f-bab2-4a63-aa5e-48d9d63bb327",
+      "userId": "504a386f-bab2-4a63-aa5e-48d9d63bb327",
+      "userType": "ActiveDirectory"
+    },
+    "installationStatus": "NotApplicable",
+    "provisioningMethod": "FromDefinition",
+    "flowFailureAlertSubscribed": true,
+    "referencedResources": [
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+          "list": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          }
+        ]
+      },
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/CreateFile"
+          }
+        ]
+      },
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+          "list": "[DYNAMIC_VALUE]"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          },
+          {
+            "referenceSourceType": "Triggers",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          }
+        ]
+      },
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          },
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/GetItems"
+          }
+        ]
+      },
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+          "fileId": "@outputs('Create_file_1')?['body/ItemId']"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          }
+        ]
+      },
+      {
+        "service": "sharepoint",
+        "resource": {
+          "site": "https://reiszsidermaneisenberg.sharepoint.com/sites/Matter06092",
+          "fileId": "@outputs('Create_file')?['body/ItemId']"
+        },
+        "referencers": [
+          {
+            "referenceSourceType": "Actions",
+            "operationId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline/apiOperations/PatchItem"
+          }
+        ]
+      }
+    ],
+    "isManaged": false,
+    "machineDescriptionData": {}
+  }
+}
