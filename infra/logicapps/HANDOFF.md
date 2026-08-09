@@ -1,38 +1,156 @@
-# Session handoff — 2026-08-08/09
+# Session handoff — 2026-08-09
 
-Everything below was done in one session. Read "Live state right now" first; there is work
-in flight.
+Second session on the archive pipeline. The previous handoff is superseded; several of its
+conclusions were wrong and are corrected below. There is work in flight — read "Live state"
+first.
 
 ---
 
-## Live state right now (as of 19:22 local, 2026-08-09 02:22 UTC)
+## Live state (01:14 local, 08:14 UTC)
 
 | Thing | State |
 |---|---|
-| `HTTP-Matter-On-Email-Receipt` | **Enabled**, healthy, 0% failure rate |
-| Service Bus `speventgridqueue` | **~2,159 active**, 0 dead-lettered — draining a sweep batch |
-| Trigger concurrency | **LIVE = 100, repo file = 40 — this is drift, see below** |
-| Inbox sweep | 5,050 of 73,666 enqueued. **Resume with `-Skip 5050`** |
-| Unsorted re-file | **Interrupted deliberately.** ~1,381 `.eml` remain in the bucket |
-| Git | `main` pushed to `origin/main`, working tree clean |
+| `HTTP-Matter-On-Email-Receipt` | **Enabled**, healthy, no drift from baseline |
+| Trigger concurrency | **100, live == repo == baseline.** Drift resolved |
+| Service Bus `speventgridqueue` | **~47,200 active, 0 dead-lettered**, draining ~200–330/min |
+| Inbox sweep | **Enqueue COMPLETE** — all 73,665 messages, 0 send errors |
+| Unsorted re-file | **Armed**, fires automatically when the queue empties |
+| `UnsortedMatterCommunication` | 2,994 `.eml` and still growing as the sweep files tier-3 misses |
+| Power Automate flows | Both dead ones **deleted** |
+| Git | `main` at `a488bea`, pushed, tree clean |
 
-### Two things to fix first
+Nothing needs doing right now. The queue drains on its own, then the re-file runs on its own.
+Roughly 2.5–4 hours of draining remained at the time of writing.
 
-**1. Concurrency drift.** I raised the live trigger concurrency 40 → 100 to test throughput and
-did **not** write it back to `HTTP-Matter-On-Email-Receipt.after.json`. Live and repo disagree.
-Decide which is right and make them match — re-running `transform.ps1` will silently revert live
-to 40 on the next deploy.
+### The one thing to know before touching a deploy
 
-Measured drain was ~147/min at concurrency 40. I had not finished measuring 100 when the session
-ended, and the measurement was confounded (see below), so **treat 100 as unvalidated**.
+Use `./deploy.ps1`, never a hand-rolled PUT, and let it check drift. Two ways to lose work by
+hand: omitting `identity` strips the managed identity every Graph call uses, and a PUT is a
+full replace, so it silently reverts any live change the repo does not know about.
 
-**2. Don't run the sweep and the re-file at the same time.** I did briefly, and it was a mistake
-for two reasons:
-- both hammer the same Azure Function (`RegExMattersAzFunc`), so they compete;
-- the sweep *adds* to `UnsortedMatterCommunication` (tier-3 matches) while the re-file drains it.
-  The bucket grew 1,163 → 1,381 while both ran.
+---
 
-**Sweep to completion first, then re-file once.**
+## Corrections to the previous handoff
+
+**"0% failure rate" was true when written but went stale within minutes.** Failures had
+resumed. Two were real bugs, below.
+
+**"Concurrency 100 is unvalidated — treat as unproven" — it is now validated, at ~330/min
+versus ~147 at 40.** It is in the repo, live, and baselined.
+
+**Do not measure throughput by counting runs in the run history.** It undercounts badly under
+load — it gave 140/min while the queue was genuinely draining at ~330/min. Queue depth is the
+trustworthy signal. Mid-session I "corrected" 330 down to 140 and that correction was wrong.
+
+**ARM's Service Bus counters are cached and lag.** Consecutive 3-minute samples read 1177, 999,
+577 then 9/min while nothing was wrong. A single reading proves nothing; a clean 60-second
+sample showed 197/min. Do not diagnose a stall from one sample — I raised a false alarm doing
+exactly that.
+
+**Power Automate flows *can* be managed from this machine.** The old handoff said they could
+not without `pac`. `pac` is genuinely absent, but the REST API at `api.flow.microsoft.com`
+accepts an `az` token for the `service.flow.microsoft.com` audience. Both flows were deleted
+that way.
+
+**`before.json` is not a stale cache to be refreshed — it is a frozen record of the original.**
+`before.json` + `transform.ps1` together are the source of truth: the original, plus every
+intentional change as reviewable code. Recapturing it from live would collapse the two and
+discard the rationale, *and* it does not work — `transform.ps1` reaches for
+`$root.If_Odata_ID_is_valid`, which is top-level in the original but nested inside
+`Process_Message` in the current shape, so it dies partway through after mutating other parts.
+This was attempted and reverted; don't repeat it.
+
+---
+
+## What changed this session
+
+Six commits, `81849b1..a488bea`.
+
+### Two live bugs that were destroying mail
+
+**A tab in the subject made an email permanently unarchivable.** `Create_blob_1` returned
+`400 InvalidUri`. Because the blob name is deterministic, the message failed *identically* on
+all 10 redeliveries and dead-lettered unarchived — silent loss. Real subjects carry tabs when
+a forwarded header block is pasted into the subject line. `San()` stripped only the
+Windows-illegal filename set.
+
+Now the full C0 range plus DEL is stripped, not just the tab/CR/LF actually observed, since a
+vertical tab or form feed fails the same way. Verified end-to-end: the two dead-lettered
+messages replayed and both succeeded, producing a 453 KB blob under `100.077`.
+
+**A stale `state` in the deploy file disabled production.** `after.json` carried
+`state: Disabled`, captured while the workflow was disabled, and a PUT is a full replace — so
+deploying from the generated file disabled the live workflow. I hit this, and re-enabled within
+about a minute against an empty queue, so nothing was missed. `transform.ps1` now forces
+`state = 'Enabled'` on emit. Any redeploy from that file would have done the same.
+
+### Drift can no longer be silent
+
+The concurrency 100-vs-40 split existed because a portal change lived nowhere in the repo and
+nothing compared the two.
+
+`deploy.ps1` keeps `deployed.json` — the definition as the tooling last PUT it — and compares
+live against **that baseline**, not against the new definition. Comparing forwards detects
+nothing, because every intentional change is also a difference. On drift it names the paths and
+refuses, unless `-AcceptDrift`. `transform.ps1` runs the same check before overwriting
+`after.json`, refusing *before* it writes; by the time `deploy.ps1` blocks the PUT the file
+already disagrees with live and the reason is easy to miss. Shared logic is in `drift.ps1` —
+one copy, so the two cannot disagree.
+
+`deployed.json` is committed deliberately: a baseline only one machine knows about cannot tell
+you someone else edited the portal.
+
+**`after.json` is now emitted key-sorted.** `ConvertFrom-Json -AsHashtable` returns unordered
+hashtables, so regeneration reshuffled keys and produced ~538 changed lines for a one-line
+edit. That is not tidiness — a real change is unreviewable in that much noise, which is
+plausibly how the concurrency difference survived review.
+
+### Both dead Power Automate flows deleted
+
+| Flow | Actions | Why safe |
+|---|---|---|
+| Unsorted Matters | 126 | `Request`-triggered so it never fired on a schedule; last run 7/30; replaced by `sweep-inbox.ps1`. Export zip already in the repo |
+| HTTP Matter On Email Receipt | 74 | Stopped since April, no runs in retained history; the Logic App's ancestor |
+
+The second had no export anywhere, so its definition is committed at
+`powerautomate-HTTP-Matter-On-Email-Receipt.deleted-20260809.json`. Worth keeping for the
+trigger alone: `When_a_message_is_received_in_a_queue_(auto-complete)` — the pattern that
+destroyed an email outright whenever a run failed, which the peek-lock rework replaced.
+
+`Sched Renew Graph API Subscription` remains (Stopped, has an export zip).
+
+### A second exposed secret, already dead
+
+GitHub push protection rejected the captured flow definition: it had a client secret for app
+`43248a7a` inline in an `HTTP_Get_Access_Token` body, hint `AJz` — neither the `2Cg` revoked
+last session nor its `PEn` replacement. The app now has exactly one credential (`PEn`, expires
+2028-08-09), so `AJz` was already revoked: nothing to rotate, and it explains why the flow
+could not have authenticated. The value never reached the remote — the push was rejected and
+the commit amended, not bypassed. Redacted in the committed copy.
+
+---
+
+## The unsorted bucket will not empty, and that is not a bug
+
+Sampling 123 subjects spread across all candidates:
+
+| Matcher verdict | Share | Re-filable |
+|---|---|---|
+| `Unsorted` — no matter named in the subject at all | **80.5%** | No |
+| `Case/Claim No` | 13% | No — needs the lookup list to map onto a matter |
+| `RSE File No` | **6.5%** | **Yes** |
+
+So expect the re-file to move roughly 1 in 15 and leave the bucket ~93% full. Four in five of
+these subjects contain nothing a matcher could resolve. **The hand-maintained lookup list is
+the binding constraint on the rest** — that open item is the main remaining lever, not a
+nice-to-have.
+
+Two groups the re-file will never touch, both pre-sanitiser artifacts where a `/` in the
+subject created a pseudo-directory:
+
+- **8 nested `.eml`** at paths like `07.020:  cmc on 7/9?.eml`, `119.010/119.015/119.019.eml`.
+  The top-level filter (which exists to avoid `Attachments/`) skips them.
+- **13 zero-byte pseudo-directory entries.**
 
 ---
 
@@ -42,182 +160,63 @@ for two reasons:
 # az is a per-user ZIP install and is NOT on PATH in Git Bash
 $az = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 
-# 1. finish the inbox sweep (73,666 total, 5,050 done)
-./infra/logicapps/sweep-inbox.ps1 -Max 5000 -Skip 5050 -Execute
-# ...repeat, advancing -Skip by the amount queued each time, until scanned >= 73666
+# the sweep is finished - do not re-run it unless you mean to reprocess the whole mailbox
+# (safe, but ~73,665 messages of work; blob names are deterministic so it overwrites)
 
-# 2. only once the queue is empty, re-file the unsorted bucket
-./infra/logicapps/refile-unsorted.ps1 -Max 2000 -Execute
+# re-file, if the armed background job did not run
+./infra/logicapps/refile-unsorted.ps1 -Max 5000 -Execute     # loop until moved=0
 
-# 3. reconcile the concurrency drift, then redeploy from the repo
-./infra/logicapps/transform.ps1 ; ./infra/logicapps/validate.ps1
+# definition work
+./infra/logicapps/transform.ps1    # refuses if live has drifted
+./infra/logicapps/validate.ps1     # must print ALL CHECKS PASSED
+./infra/logicapps/deploy.ps1       # dry run; add -Execute to deploy
 ```
 
-Both scripts are safe to re-run. Blob names are deterministic (matter + sanitised subject), so
-reprocessing overwrites rather than duplicates. `refile-unsorted.ps1` copies server-side and
-deletes the source only after confirming the destination, so an interrupted run leaves
-duplicates, never a loss.
-
 ---
 
-## What was changed
+## Gotchas
 
-### Logic App `HTTP-Matter-On-Email-Receipt` (rg `Sharepoint1`)
+Still true from last session: `az` is at `$env:LOCALAPPDATA\AzureCLI\bin\az.cmd`; `az.cmd`
+mangles `$top`/`$filter`/`$skiptoken` in ARM URLs, so page with `Invoke-RestMethod`; ARM tokens
+expire mid-session; `filter()`/`select()` are Logic App *actions*, not expression functions; an
+action may only reference another on its own `runAfter` path; Graph `/subscriptions` pages at
+~21; never name a PowerShell function `H`.
 
-SharePoint site/library work removed; blob archiving only. **108 actions → 61; 27 SharePoint
-operations → 2 read-only matter lookups.**
+New:
 
-Removed: site-exists check, `Create_Microsoft_365_Group`, hub join, folder/file creation, the
-whole To/From/Subject/HasAttachments/EmailCreated/AttachmentLinks column+view scaffolding, the
-`Update_item*` write-backs, 6 minutes of hardcoded `Delay` actions, and both
-move-to-Deleted-Items calls (per request).
-
-The workflow carried **two byte-identical branches** — one for "site exists", one for "site just
-created". With SharePoint gone the discriminator went too, so they collapsed to one path. Keeping
-all four `Create_blob*` actions, as the original brief asked, would have written every email and
-attachment twice.
-
-Correctness fixes found while tracing failures:
-
-- `toUpper(outputs('Get_Email_From'))` threw `InvalidTemplate` on any message with no From. A
-  live failure cause, unrelated to SharePoint, that would have survived the removal.
-- `For_each_Subject_Word` made one SharePoint lookup **per word of every subject** at concurrency
-  20 while mutating shared variables — so `blnKeepProcessing` short-circuited nothing and the
-  matter chosen was whichever iteration finished last. Replaced with a single OR'd `$filter`
-  query plus a sequential in-memory scan; first matching word in subject order now always wins.
-- `AppendTo*Variable` in a parallel loop can **drop** items, not merely reorder them. Those loops
-  are now sequential.
-- Guarded the blob path against an empty `strFoundMatter`, which wrote to `/matters//Emails/`
-  while reporting success.
-- Capped blob name length so an oversized subject cannot make an email permanently unarchivable.
-
-Durability: trigger was **auto-complete**, so any failed run silently destroyed that email. Now
-peek-lock, work wrapped in a scope, complete on success / abandon on failure. Queue has
-`deadLetteringOnMessageExpiration=true`, `lockDuration=PT5M`, `maxDeliveryCount=10`, TTL 14 days.
-
-Auth: Graph calls use the workflow's **managed identity** (`30701da1-0d55-454a-bf67-bfdd70f93a76`,
-granted `Mail.Read`). `HTTP_Get_Access_Token` and the Key Vault lookup are gone; no secret in the
-definition.
-
-**Unfiled-matter handling (important):** the lookup list is maintained by hand and always lags.
-When the lookup returns no row but the function classified the match as `RSE File No`, the email
-is now filed under that number anyway. Previously it was archived **nowhere at all** — 87% of all
-unfiled mail. Only strict RSE File No values are trusted this way; a Case/Claim number still needs
-the list to map it onto a matter.
-
-### Graph subscriptions (`RegExAzFunc`)
-
-`changeType` `Created,Updated` → **`Created`**. 94 subscriptions migrated, 0 failures, 59s.
-
-`Updated` fired on every read, flag and move, and because blob names are deterministic each one
-re-downloaded the message and overwrote a blob that was already correct. Measured: **87% of all
-queue events were `updated`; 84 archiving runs produced 7 distinct blobs — one email re-archived
-44 times.**
-
-`changeType` and `resource` are immutable, so `MatchesDesiredShape`/`MigrateAsync` replace drifted
-subscriptions. The drift check runs **before** the renew-window skip on purpose — after it, a
-subscription not yet due for renewal keeps the old shape until it lapses and the migration
-silently never happens.
-
-Also deleted: orphan subscription `chavez@rse-law.com` (enabled account, but `mailboxSettings`
-404s — no mailbox), and the unused `office365` API connection.
-
-### Matter matching (`RegExMattersAzFunc`)
-
-Tokenising keeps `-` because case numbers need it internally
-(`30-2023-01351580-CU-PO-NJC`). That meant `100.238- Santa Rosa` tokenised to `100.238-` and the
-anchored pattern failed, filing it under `UnsortedMatterCommunication`. Each token is now also
-tried with leading/trailing `.`, `-`, `_` stripped — ends only, never the interior.
-
-### Security — a secret was exposed and rotated
-
-While comparing the secret embedded in the Power Automate export against Key Vault, I named a
-helper function `H`, which collides with PowerShell's alias for `Get-History`. The function never
-ran; both secrets were printed in full in the error output, into the session transcript.
-
-Rotated and closed out:
-- new credential on app `43248a7a` (`PEn…`, expires 2028-08-09), verified it reads mail and lists
-  subscriptions;
-- `GraphSubClientSecret` in `kv-rse-graphsubs` updated;
-- Function App restarted, re-read the vault, returned all 94 subscriptions;
-- **exposed credential (`2Cg…`) deleted.**
-
-If that transcript is retained anywhere, note the value is already revoked.
-
----
-
-## The Power Automate flow — deliberately not repaired
-
-`OutlookSearchSPFxWebPart/FIles/UnsortedMattersInbox_20260809014122.zip` is an export of the
-**"Unsorted Matters"** flow: 126 actions, 28 SharePoint, 5 blob. Its job was to file mail already
-sitting in `matters@rse-law.com` (**73,666 messages back to 2026-02-07**) — a real gap, since the
-live pipeline only reacts to new arrivals.
-
-It was not repaired because:
-- its embedded client secret is the one **deleted during the incident**, so it could not have
-  authenticated anyway;
-- Power Automate HTTP actions **cannot use a managed identity**, so fixing it properly means
-  adding a Key Vault connection purely to authenticate;
-- it cannot be deployed from this machine — no `pac` CLI, and flows are not ARM resources;
-- it duplicates matter-matching logic that would drift from the Logic App's.
-
-`sweep-inbox.ps1` replaces it: enumerate the mailbox, raise one Service Bus event per message in
-the shape Graph sends, let the hardened pipeline do the filing. Verified on 50 messages — 67 runs,
-all succeeded, 28 of 40 sampled archived (70%).
-
-**The flow should be deleted once the sweep is complete**, or it will be a second, broken pipeline.
-
----
-
-## Results so far
-
-| | Before | After |
-|---|---|---|
-| Backlog | 924 | 0 |
-| Dead-letter queue | 188 | 0 |
-| Run failure rate | ~53% | **0%** |
-| Actions defined | 108 | 61 |
-| SharePoint connector actions | 27 | 2 |
-| SharePoint calls per message | 7+, plus one per subject word | **exactly 1** |
-| Hardcoded delay per run | 6 min | none |
-| Secrets in definitions | 1 plaintext | none |
-| Graph event volume | baseline | **−87%** |
-
-Recovered 258 emails behind the original failed runs (578 runs, deduplicated), 100% succeeded.
-
-**No honest before/after run-duration figure exists.** The app was already failing when the
-session started, so there was no valid baseline, and the historical successful runs have since
-aged out of retention. The structural numbers above are exact.
-
----
-
-## Gotchas that cost time
-
-- `az` is a per-user ZIP install: `& "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"`. Not on PATH in Git
-  Bash.
-- `az.cmd` mangles `$top` / `$filter` / `$skiptoken` in ARM URLs — use `Invoke-RestMethod` with a
-  bearer token for anything paged.
-- ARM tokens expire mid-session. Refresh with
-  `az account get-access-token --resource https://management.azure.com`.
-- **`filter()` and `select()` are not Logic App expression functions** — they are the `Query` and
-  `Select` actions. The designer accepts the expression form and it fails only at runtime.
-- An action may only reference another that is on its own `runAfter` path. ARM rejects the whole
-  definition otherwise; this is how the first unfiled-matter deploy failed.
-- `az storage blob list` silently truncates at 5,000 — a listing that "finds nothing recent" is
-  usually truncation, not absence.
-- Graph `/subscriptions` pages at ~21 per page. An unpaged count looks like catastrophic loss.
-- Don't name a PowerShell function `H` (alias for `Get-History`). That is what leaked the secret.
-- Logic App run history is consumed fast under load — recover failed runs *before* a large drain,
-  or page deeper (`-MaxPages 80` reached 20,000 runs).
+- **`az storage blob list` silently truncates.** `--num-results 5000` hid blobs past the cap
+  no matter how often the script re-ran. `--num-results '*'` returns every page — verified
+  against a REST listing, both 4,126.
+- **`az` mangles non-cp1252 blob names.** "Unable to encode the output with cp1252 encoding.
+  Unsupported characters are discarded" — emoji, curly quotes, CJK. 5 of 2,380 when measured.
+  The loss happens inside `az` before PowerShell sees it, so neither `[Console]::OutputEncoding`
+  nor `PYTHONIOENCODING` helps; only listing over REST avoids it. Those blobs fail safe: the
+  copy 404s and the source is left in place.
+- **Never recurse through `ForEach-Object` when transforming JSON.** The pipeline passes a
+  PSObject-wrapped element, and a wrapped string satisfies `-is [pscustomobject]` where a bare
+  one does not — so `"Succeeded"` became `{"Length":9}`, rewriting every `runAfter` status and
+  schema `required` list. Test scalars first, walk arrays with `foreach`. A byte-stability
+  assertion caught this; `validate.ps1` did not.
+- **Service Bus `lockDuration` caps at `PT5M`** and cannot be raised. At concurrency 100 about
+  1.2% of runs exceed it and lose the lock *after* archiving succeeded; the message redelivers
+  and rewrites the same deterministic blob. Repeated work, not lost mail.
+- **A `[xml]` cast fails on Azure REST responses** because of the UTF-8 BOM. Strip it first.
+- **Background jobs need `run_in_background`, not `Start-Job`** — shell state does not survive
+  between calls, so the job dies with its shell.
+- **`sweep-inbox.ps1 -Skip` re-walks the mailbox from the start** each run, so later offsets
+  spend longer paging Graph before enqueueing anything. Larger `-Max` reduces that.
 
 ---
 
 ## Open items
 
-1. **Finish the sweep** — ~68,600 messages remain.
-2. **Then re-file** `UnsortedMatterCommunication` (~1,381 `.eml`).
-3. **Reconcile concurrency drift** (live 100 vs repo 40) and validate the right value.
-4. **Delete the "Unsorted Matters" Power Automate flow** once the sweep is done.
-6. **The matter lookup list is maintained by hand** and lags newly opened matters. The unfiled-
-   matter change removes the worst symptom, but a real source of truth would fix the cause.
-7. `MimeKit 4.9.0` has a known moderate-severity advisory (surfaced during build).
+1. **Wait for the queue to drain, then confirm the re-file ran.** Both are automatic.
+2. **The lookup list is maintained by hand and lags newly opened matters.** Now known to gate
+   ~93% of the unsorted bucket. A real source of truth is the highest-value remaining fix.
+3. **8 nested `.eml` + 13 zero-byte entries** stranded in `UnsortedMatterCommunication`.
+4. **`MimeKit 4.9.0`** has a known moderate-severity advisory.
+5. **Consider deleting `Sched Renew Graph API Subscription`** — stopped, superseded by
+   `RegExAzFunc`, and a stopped-but-present flow is what someone restarts by accident later.
+6. **No honest before/after run-duration figure exists.** The app was already failing when the
+   first session started, so there is no valid baseline, and the historical successful runs
+   have aged out of retention. Structural numbers are exact; duration ones do not exist.
