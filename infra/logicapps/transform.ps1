@@ -224,6 +224,44 @@ $regex.else = @{ actions = @{
   }
 } }
 
+# ------- 3b. a well-formed matter number is filed even if the list lacks it
+# The lookup list is maintained by hand, so it always lags newly opened matters.
+# SharePoint is no longer the archive target, and a blob path creates its own
+# folder, so the list's remaining job is resolution, not permission. Requiring a
+# row meant a subject carrying a perfectly good file number was archived nowhere
+# at all - measured 2026-08-08 as 87% of all unfiled mail.
+# Spliced into the chain rather than hung off the HTTP call in parallel: an action
+# may only reference another that is on its own runAfter path, and ARM rejects the
+# definition outright otherwise.
+$notEmpty.Get_Reg_Ex_Match_Type = @{
+  type = 'Compose'
+  runAfter = @{ Get_Reg_Ex_Match_All_Subject = @('Succeeded') }
+  inputs = "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
+}
+$regex.runAfter = @{ Get_Reg_Ex_Match_Type = @('Succeeded') }
+# Only values the function classified as an RSE File No are trusted this way -
+# those passed the strict anchored pattern. A Case/Claim number is just an
+# external reference and still needs the list to map it onto a matter.
+$regex.actions.If_Found_Item_in_List.else = @{ actions = @{
+  If_Well_Formed_RSE_No_Not_In_List = @{
+    type = 'If'
+    runAfter = @{}
+    expression = @{ and = @(@{ equals = @("@outputs('Get_Reg_Ex_Match_Type')", 'RSE File No') }) }
+    actions = @{
+      Set_variable_blnFoundItem_Unlisted = @{
+        type = 'SetVariable'; runAfter = @{}
+        inputs = @{ name = 'blnFoundItem'; value = '@true' }
+      }
+      Set_variable_strFoundMatter_Unlisted = @{
+        type = 'SetVariable'
+        runAfter = @{ Set_variable_blnFoundItem_Unlisted = @('Succeeded') }
+        inputs = @{ name = 'strFoundMatter'; value = "@outputs('Get_Reg_Ex_Match_All_Subject')" }
+      }
+    }
+    else = @{ actions = @{} }
+  }
+} }
+
 # ------------------------------- 4. serialise appends that race on a variable
 $odata.For_each_Recipient.runtimeConfiguration = @{ concurrency = @{ repetitions = 1 } }
 $odata.For_each_CC.runtimeConfiguration        = @{ concurrency = @{ repetitions = 1 } }
