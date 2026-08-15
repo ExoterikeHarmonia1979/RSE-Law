@@ -89,8 +89,51 @@
       "filterable": true,
       "sortable": false,
       "facetable": false
+    },
+    {
+      "name": "content_vector",
+      "type": "Collection(Edm.Single)",
+      "searchable": true,
+      "retrievable": false,
+      "filterable": false,
+      "sortable": false,
+      "facetable": false,
+      "dimensions": 1536,
+      "vectorSearchProfile": "vector-profile"
     }
   ],
+  "vectorSearch": {
+    "algorithms": [
+      {
+        "name": "hnsw-cosine",
+        "kind": "hnsw",
+        "hnswParameters": {
+          "metric": "cosine",
+          "m": 4,
+          "efConstruction": 400,
+          "efSearch": 500
+        }
+      }
+    ],
+    "vectorizers": [
+      {
+        "name": "aoai-embedding-3-small",
+        "kind": "azureOpenAI",
+        "azureOpenAIParameters": {
+          "resourceUri": "https://rse-matters-openai.openai.azure.com",
+          "deploymentId": "text-embedding-3-small",
+          "modelName": "text-embedding-3-small"
+        }
+      }
+    ],
+    "profiles": [
+      {
+        "name": "vector-profile",
+        "algorithm": "hnsw-cosine",
+        "vectorizer": "aoai-embedding-3-small"
+      }
+    ]
+  },
   "suggesters": [
     {
       "name": "sg",
