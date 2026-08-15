@@ -23,31 +23,53 @@ param(
   [string]$SourcePrefix = 'UnsortedMatterCommunication/Emails/'
 )
 $ErrorActionPreference = 'Stop'
-# Known limitation: az warns "Unable to encode the output with cp1252 encoding.
-# Unsupported characters are discarded" and mangles blob names containing emoji,
-# curly quotes or CJK - 5 of 2380 when last measured. The loss happens inside az
-# before the output reaches PowerShell, so neither [Console]::OutputEncoding nor
-# PYTHONIOENCODING helps; only listing over the REST API would. Those blobs fail
-# safe: the copy 404s and is counted as failed, with the source left in place.
+# The listing is done over REST, not `az storage blob list`, because az mangles the
+# names: it warns "Unable to encode the output with cp1252 encoding. Unsupported
+# characters are discarded" and then silently drops characters, so the copy source
+# 404s on a blob that is really there.
+#
+# This is not a rare edge case. Measured against a REST listing of the same prefix,
+# 122 of 6053 names - 2% - came back from az as something that does not exist. Email
+# subjects are full of en dashes and curly quotes, and the discarded character leaves
+# a name that looks almost right ("Gasparyan - Meet" for "Gasparyan <U+2013> Meet"),
+# which is exactly the kind of near-miss that reads as a data problem rather than a
+# tooling one. An earlier estimate of 5 in 2380 was made by testing whether the name
+# survived a cp1252 round-trip; that undercounts by 10x, because az also drops
+# characters cp1252 can represent perfectly well.
+#
+# The loss happens inside az before the output reaches PowerShell, so neither
+# [Console]::OutputEncoding nor PYTHONIOENCODING helps. REST is the fix.
 $az  = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $key = (Get-Content "$env:TEMP\sakey.txt" -Raw).Trim()
 $fn  = 'https://regexazfunc.azurewebsites.net/api/RegExMattersAzFunc'
 $root = "https://$Account.blob.core.windows.net/$Container"
 
 $expiry = (Get-Date).ToUniversalTime().AddHours(4).ToString('yyyy-MM-ddTHH:mm:ssZ')
+# 'l' so the same SAS can list; the rest is read/copy/write/delete for the move
 $sas = (& $az storage container generate-sas --account-name $Account --account-key $key `
-          --name $Container --permissions racwd --expiry $expiry -o tsv).Trim()
+          --name $Container --permissions racwdl --expiry $expiry -o tsv).Trim()
 if (-not $sas) { throw 'could not mint a container SAS' }
 
-# '*' means every page. A literal cap silently truncates the listing, so blobs past
-# the cap would never be seen however often this is re-run - and the sweep keeps
-# adding to this prefix, so the bucket does cross 5000.
-$blobs = & $az storage blob list --account-name $Account --account-key $key -c $Container `
-            --prefix $SourcePrefix --num-results '*' -o json | ConvertFrom-Json
+# Paged REST listing. maxresults caps a *page*, not the result set - NextMarker walks
+# the rest - so unlike a literal --num-results cap nothing is silently left behind.
+function Get-BlobNames([string]$prefix) {
+  $names = New-Object System.Collections.Generic.List[string]
+  $marker = ''
+  do {
+    $u = "$root`?restype=container&comp=list&prefix=$([uri]::EscapeDataString($prefix))&maxresults=5000&$sas"
+    if ($marker) { $u += "&marker=$([uri]::EscapeDataString($marker))" }
+    # the response is UTF-8 with a BOM, which a bare [xml] cast will not parse
+    $xml = [xml]((Invoke-WebRequest -Uri $u).Content -replace "^﻿", '')
+    foreach ($b in $xml.EnumerationResults.Blobs.Blob) { $names.Add($b.Name) }
+    $marker = $xml.EnumerationResults.NextMarker
+  } while ($marker)
+  $names
+}
+
 # top-level .eml only - never the Attachments/ subfolder
-$emls = @($blobs | Where-Object {
-  $_.name -like '*.eml' -and ($_.name -replace [regex]::Escape($SourcePrefix), '') -notlike '*/*'
-})
+$emls = @(Get-BlobNames $SourcePrefix | Where-Object {
+  $_ -like '*.eml' -and ($_ -replace [regex]::Escape($SourcePrefix), '') -notlike '*/*'
+} | ForEach-Object { [pscustomobject]@{ name = $_ } })
 Write-Host "unsorted .eml blobs: $($emls.Count)"
 
 $moved = 0; $skipped = 0; $failed = 0
