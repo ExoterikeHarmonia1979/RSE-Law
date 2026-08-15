@@ -22,6 +22,13 @@ export interface ISearchOptions {
 const HL_PRE = '\uE000';
 const HL_POST = '\uE001';
 
+// Hybrid search: the keyword query and this vector query go in the SAME request and
+// Azure AI Search fuses the two result sets with Reciprocal Rank Fusion. kind:'text'
+// means the service embeds the query itself using the vectorizer configured on the
+// index, so no Azure OpenAI credential is ever needed in the browser.
+const VECTOR_FIELD = 'content_vector';
+const VECTOR_K = 50;
+
 const SELECT_FIELDS = [
   'content',
   'sent_date',
@@ -112,6 +119,30 @@ export class AzureSearchService {
       highlightPreTag: HL_PRE,
       highlightPostTag: HL_POST
     };
+    // Hybrid only when there is text to embed AND relevance ordering to rank it.
+    //
+    // Two separate reasons, both measured against the live index:
+    //
+    // A vector query alongside search:'*' does not mean "everything plus semantic
+    // matches" — it collapses the result set to the k nearest vectors, so the opening
+    // screen would show 50 messages instead of the whole archive. parsed.text is empty
+    // for an empty box and for a prefix-only query like `from:dallas`, which is a
+    // lookup rather than a question, so both correctly stay keyword-only.
+    //
+    // Sorting by date is the harder case. The vector half adds up to k loosely-related
+    // documents to EVERY search — searching "Stryzhak" went from 15 hits to 65 — and
+    // ordering by date discards the RRF ranking that would otherwise keep the real
+    // matches on top, so they interleave by date instead. Measured on that query, the
+    // first page went from 7 relevant results out of 8 to 2 out of 8. Lowering k does
+    // not fix it; the problem is that date order has no notion of relevance at all.
+    if (parsed.text && !options.orderByDate) {
+      body.vectorQueries = [{
+        kind: 'text',
+        text: parsed.text,
+        fields: VECTOR_FIELD,
+        k: VECTOR_K
+      }];
+    }
     if (parsed.filter) {
       body.filter = parsed.filter;
     }

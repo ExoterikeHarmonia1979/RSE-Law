@@ -15,6 +15,16 @@
 export interface IParsedQuery {
   search: string;
   filter: string | undefined;
+  /**
+   * The unprefixed words and quoted phrases only — what the user actually typed
+   * as meaning, with the Lucene escaping and the field: syntax left out.
+   *
+   * This is what gets embedded for the vector half of a hybrid search, so it must
+   * be the plain sentence: escaping is an artefact of the keyword grammar and
+   * `from:dallas` describes a person rather than a subject, so neither belongs in
+   * a sentence embedding. Empty when the user typed only prefixes, or nothing.
+   */
+  text: string;
 }
 
 const FIELD_MAP: { [prefix: string]: string } = {
@@ -50,6 +60,7 @@ function dayRangeFilter(isoDay: string): string | undefined {
 export function parseOutlookQuery(input: string): IParsedQuery {
   const searchParts: string[] = [];
   const filterParts: string[] = [];
+  const textParts: string[] = [];
 
   // token = prefix:value | prefix:"quoted value" | "quoted phrase" | word
   const tokenRe = /(\w+):(?:"([^"]*)"|(\S+))|"([^"]*)"|(\S+)/g;
@@ -83,11 +94,14 @@ export function parseOutlookQuery(input: string): IParsedQuery {
       } else {
         // Unknown prefix — treat the whole token as plain text, like Outlook does.
         searchParts.push(escapeLucene(`${prefix}:${prefixValue}`));
+        textParts.push(`${prefix}:${prefixValue}`);
       }
     } else if (phrase !== undefined) {
       searchParts.push(luceneTerm(phrase, true));
+      textParts.push(phrase);
     } else if (word !== undefined) {
       searchParts.push(escapeLucene(word));
+      textParts.push(word);
     }
 
     m = tokenRe.exec(input);
@@ -95,6 +109,7 @@ export function parseOutlookQuery(input: string): IParsedQuery {
 
   return {
     search: searchParts.length > 0 ? searchParts.join(' ') : '*',
-    filter: filterParts.length > 0 ? filterParts.join(' and ') : undefined
+    filter: filterParts.length > 0 ? filterParts.join(' and ') : undefined,
+    text: textParts.join(' ')
   };
 }
