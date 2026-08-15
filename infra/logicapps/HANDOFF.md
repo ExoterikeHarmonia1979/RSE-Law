@@ -109,10 +109,18 @@ plausibly how the concurrency difference survived review.
 
 | Flow | Actions | Why safe |
 |---|---|---|
-| Unsorted Matters | 126 | `Request`-triggered so it never fired on a schedule; last run 7/30; replaced by `sweep-inbox.ps1`. Export zip already in the repo |
+| Unsorted Matters | 126 | `Request`-triggered so it never fired on a schedule; last run 7/30; replaced by `sweep-inbox.ps1` |
 | HTTP Matter On Email Receipt | 74 | Stopped since April, no runs in retained history; the Logic App's ancestor |
 
-The second had no export anywhere, so its definition is committed at
+**Correction (2026-08-15):** an earlier note here and in commit `2a884e6` said the Unsorted
+Matters export zip was "already in the repo". It is not. `OutlookSearchSPFxWebPart/.gitignore`
+ignores `FIles/` wholesale, so the zip exists only on this machine and is not a durable backup —
+if the machine is lost, that flow definition is gone. It was not committed after the fact on
+purpose: the export embeds the `AJz` client secret, GitHub push protection would reject it, and
+the flow is fully superseded by `sweep-inbox.ps1`. Recorded so nobody counts on a backup that
+does not exist.
+
+The second flow had no export anywhere, so its definition is committed at
 `powerautomate-HTTP-Matter-On-Email-Receipt.deleted-20260809.json`. Worth keeping for the
 trigger alone: `When_a_message_is_received_in_a_queue_(auto-complete)` — the pattern that
 destroyed an email outright whenever a run failed, which the peek-lock rework replaced.
