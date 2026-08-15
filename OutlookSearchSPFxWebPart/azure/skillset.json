@@ -17,6 +17,39 @@
         { "name": "attachmentNames", "targetName": "attachmentNames" },
         { "name": "sentDate", "targetName": "sentDate" }
       ]
+    },
+    {
+      "@odata.type": "#Microsoft.Skills.Text.SplitSkill",
+      "name": "split-content",
+      "description": "First chunk only, so each document gets exactly one vector and the index stays one row per email. Chunking per page would make a result a chunk rather than a message, which the web part's paging, counts and de-duplication all assume.",
+      "context": "/document",
+      "textSplitMode": "pages",
+      "maximumPageLength": 16000,
+      "pageOverlapLength": 0,
+      "maximumPagesToTake": 1,
+      "defaultLanguageCode": "en",
+      "inputs": [
+        { "name": "text", "source": "/document/content" }
+      ],
+      "outputs": [
+        { "name": "textItems", "targetName": "chunks" }
+      ]
+    },
+    {
+      "@odata.type": "#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill",
+      "name": "embed-content",
+      "description": "No apiKey: the search service authenticates with its own system-assigned identity, granted Cognitive Services OpenAI User on the account.",
+      "context": "/document",
+      "resourceUri": "https://rse-matters-openai.openai.azure.com",
+      "deploymentId": "text-embedding-3-small",
+      "modelName": "text-embedding-3-small",
+      "dimensions": 1536,
+      "inputs": [
+        { "name": "text", "source": "/document/chunks/0" }
+      ],
+      "outputs": [
+        { "name": "embedding", "targetName": "content_vector" }
+      ]
     }
   ]
 }

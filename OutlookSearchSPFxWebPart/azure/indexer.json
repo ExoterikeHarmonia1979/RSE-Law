@@ -35,6 +35,10 @@
     {
       "sourceFieldName": "/document/sentDate",
       "targetFieldName": "sent_date"
+    },
+    {
+      "sourceFieldName": "/document/content_vector",
+      "targetFieldName": "content_vector"
     }
   ]
 }
