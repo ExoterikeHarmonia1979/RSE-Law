@@ -8,8 +8,8 @@
   },
   "parameters": {
     "batchSize": null,
-    "maxFailedItems": 100,
-    "maxFailedItemsPerBatch": 20,
+    "maxFailedItems": 1000,
+    "maxFailedItemsPerBatch": 200,
     "configuration": {
       "indexedFileNameExtensions": ".eml,.msg",
       "dataToExtract": "contentAndMetadata",
