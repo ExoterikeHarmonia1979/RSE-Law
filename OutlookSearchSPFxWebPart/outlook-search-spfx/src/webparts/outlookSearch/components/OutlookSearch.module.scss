@@ -218,27 +218,35 @@ $text-secondary: #616161;
   }
 }
 
-// Download the message straight from the list, without opening it first. Anchored
-// to the record's top-left corner. Hidden until the row is hovered, focused or
-// selected: a control on every row at once would compete with the sender name,
-// which is what people actually scan the list by.
+// Download the message straight from the list, without opening it first.
+//
+// It takes the avatar's place on hover rather than sitting on top of it. The
+// record's top-left corner is where the 32px Persona already is, so anything
+// absolutely positioned there overlaps it; and reserving a separate column would
+// shift every row sideways on hover. Swapping the two is what Outlook does with its
+// hover checkbox, and the avatar is decorative - the sender's name is right beside
+// it - so nothing is lost while the pointer is on the row.
+//
+// Geometry lands the control exactly on the avatar: .listItem pads 10px top / 9px
+// left, .itemPersona adds 2px of its own padding-top, and the Persona box is 32px.
 .itemDownload {
   position: absolute;
-  top: 3px;
-  left: 3px;
+  top: 12px;
+  left: 9px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   border: 1px solid $border;
   border-radius: 50%;
   color: $outlook-blue;
   background: #ffffff;
-  font-size: 11px;
+  font-size: 13px;
   text-decoration: none;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.1s ease-in-out;
 
   &:hover {
@@ -246,9 +254,7 @@ $text-secondary: #616161;
     border-color: $outlook-blue;
   }
 
-  // always reachable by keyboard, never hidden from it
   &:focus-visible {
-    opacity: 1;
     outline: 2px solid $outlook-blue;
     outline-offset: 1px;
   }
@@ -257,15 +263,18 @@ $text-secondary: #616161;
 .listItem:hover .itemDownload,
 .listItem:focus-within .itemDownload {
   opacity: 1;
+  pointer-events: auto;
+}
+
+// the avatar steps aside for it, so the two never occupy the corner at once
+.listItem:hover .itemPersona,
+.listItem:focus-within .itemPersona {
+  opacity: 0;
 }
 
 .listItemSelected {
   background: $selected-bg;
   border-left-color: $outlook-blue;
-
-  .itemDownload {
-    opacity: 1;
-  }
 
   &:hover {
     background: $selected-bg;
@@ -275,6 +284,7 @@ $text-secondary: #616161;
 .itemPersona {
   flex: 0 0 auto;
   padding-top: 2px;
+  transition: opacity 0.1s ease-in-out;  // fades out for .itemDownload on hover
 }
 
 .itemBody {
