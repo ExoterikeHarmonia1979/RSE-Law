@@ -98,16 +98,24 @@ function Measure-Config {
   }
 }
 
-# --- how far through the backfill are we? every hybrid number depends on it
+# --- how much of the corpus actually has a vector? every hybrid number depends on it.
+#
+# Do NOT infer this from the last run's itemsProcessed: once the backfill is done the
+# indexer runs hourly over only what changed, so that number is a handful of documents
+# and reads as "0.1% complete" on a fully populated index. Vector index size is the
+# honest measure - it accumulates and does not reset per run.
 $status = (Invoke-RestMethod -Uri "$base/indexers/matters-eml-indexer/status?api-version=$ApiVersion" -Headers $h).lastResult
 $docs = (Invoke-RestMethod -Uri "$base/indexes/$Index/stats?api-version=$ApiVersion" -Headers $h).documentCount
-$pct = if ($docs) { [math]::Round(100 * $status.itemsProcessed / $docs, 1) } else { 0 }
+$vecMB = (Invoke-RestMethod -Uri "$base/servicestats?api-version=$ApiVersion" -Headers $h).counters.vectorIndexSize.usage / 1MB
+$expectMB = $docs * 1536 * 4 / 1MB     # dimensions x 4 bytes per float
+$coverage = if ($expectMB) { [math]::Round(100 * $vecMB / $expectMB, 1) } else { 0 }
 Write-Host ""
 Write-Host "Search quality report  -  $(Get-Date -Format 'yyyy-MM-dd HH:mm')" -ForegroundColor White
 Write-Host "index $Index : $docs documents"
-Write-Host "vector backfill: $($status.itemsProcessed) processed ($pct%), run status $($status.status)"
-if ($pct -lt 99) {
-  Write-Host "WARNING: backfill incomplete - every hybrid row below understates. Re-run when it finishes." -ForegroundColor Yellow
+Write-Host ("vector coverage: {0:N1} MB of ~{1:N0} MB expected ({2}%)   last run: {3}, {4} processed, {5} failed" -f `
+  $vecMB, $expectMB, $coverage, $status.status, $status.itemsProcessed, $status.itemsFailed)
+if ($coverage -lt 80) {
+  Write-Host "WARNING: vector coverage low - every hybrid row below understates. Re-run when the backfill finishes." -ForegroundColor Yellow
 }
 Write-Host ""
 
