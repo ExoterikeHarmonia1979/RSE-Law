@@ -200,6 +200,7 @@ $text-secondary: #616161;
 }
 
 .listItem {
+  position: relative; // anchors .itemDownload to the record's top-left corner
   display: flex;
   gap: 10px;
   padding: 10px 12px 10px 9px;
@@ -217,9 +218,54 @@ $text-secondary: #616161;
   }
 }
 
+// Download the message straight from the list, without opening it first. Anchored
+// to the record's top-left corner. Hidden until the row is hovered, focused or
+// selected: a control on every row at once would compete with the sender name,
+// which is what people actually scan the list by.
+.itemDownload {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid $border;
+  border-radius: 50%;
+  color: $outlook-blue;
+  background: #ffffff;
+  font-size: 11px;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+
+  &:hover {
+    background: $selected-bg;
+    border-color: $outlook-blue;
+  }
+
+  // always reachable by keyboard, never hidden from it
+  &:focus-visible {
+    opacity: 1;
+    outline: 2px solid $outlook-blue;
+    outline-offset: 1px;
+  }
+}
+
+.listItem:hover .itemDownload,
+.listItem:focus-within .itemDownload {
+  opacity: 1;
+}
+
 .listItemSelected {
   background: $selected-bg;
   border-left-color: $outlook-blue;
+
+  .itemDownload {
+    opacity: 1;
+  }
 
   &:hover {
     background: $selected-bg;
@@ -372,8 +418,47 @@ $text-secondary: #616161;
 
 .readingSubjectRow {
   flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   padding: 14px 20px 8px;
   border-bottom: 1px solid $border;
+}
+
+// Download the whole message. Sits at the top right of the reading pane, opposite
+// the subject, which keeps it clear of the attachment row below.
+.downloadEml {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid $border;
+  border-radius: 4px;
+  color: $outlook-blue;
+  background: #ffffff;
+  text-decoration: none;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: $selected-bg;
+    border-color: $outlook-blue;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $outlook-blue;
+    outline-offset: 1px;
+  }
+}
+
+.downloadEmlIcon {
+  font-size: 14px;
+}
+
+.downloadEmlText {
+  font-weight: 600;
 }
 
 .readingSubject {
@@ -421,6 +506,40 @@ $text-secondary: #616161;
   flex-wrap: wrap;
   gap: 8px;
   padding: 0 20px 10px;
+}
+
+// Pairs the attachment card with its own download control.
+.attachmentCardWrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.attachmentDownload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  margin-left: -1px;            // share the card's border rather than doubling it
+  border: 1px solid $border;
+  border-radius: 0 4px 4px 0;
+  color: $outlook-blue;
+  background: #ffffff;
+  text-decoration: none;
+  font-size: 13px;
+
+  &:hover {
+    background: $selected-bg;
+    border-color: $outlook-blue;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $outlook-blue;
+    outline-offset: 1px;
+  }
+}
+
+.attachmentCardWrap .attachmentCard {
+  border-radius: 4px 0 0 4px;
 }
 
 .attachmentCard {

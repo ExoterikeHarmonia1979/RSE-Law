@@ -15,12 +15,20 @@ namespace Company.Function;
 /// Outlook-fidelity access to .eml files in the matters blob container,
 /// used by the Email Archive Search SPFx web part.
 ///
-///   POST { storagePath }            -> preview JSON (sanitized HTML body with
-///                                      cid: images inlined, recipients,
-///                                      attachment names/sizes)
-///   GET  ?path=...&amp;att=name     -> streams the decoded attachment with its
-///                                      real MIME type (inline disposition, so
-///                                      the browser opens PDFs/images directly)
+///   POST { storagePath }               -> preview JSON (sanitized HTML body with
+///                                         cid: images inlined, recipients,
+///                                         attachment names/sizes)
+///   GET  ?path=...&amp;att=name        -> streams the decoded attachment with its
+///                                         real MIME type (inline disposition, so
+///                                         the browser opens PDFs/images directly)
+///   GET  ?path=...&amp;att=name&amp;dl=1 -> the same bytes with an attachment
+///                                         disposition, so it saves instead
+///   GET  ?path=...                     -> the original .eml itself, as a download.
+///                                         Served as stored rather than re-serialised
+///                                         from MimeKit, so the saved file is
+///                                         byte-identical to the archived message and
+///                                         opens in Outlook with its attachments and
+///                                         headers intact.
 /// </summary>
 public class EmlPreviewFunc
 {
@@ -51,7 +59,10 @@ public class EmlPreviewFunc
     {
         if (HttpMethods.IsGet(req.Method))
         {
-            return await ServeAttachment(req);
+            // no 'att' means the caller wants the message itself
+            return string.IsNullOrWhiteSpace(req.Query["att"])
+                ? await ServeEml(req)
+                : await ServeAttachment(req);
         }
         return await ServePreview(req);
     }
@@ -143,19 +154,69 @@ public class EmlPreviewFunc
                 contentType = InferContentType(attachmentName);
             }
 
-            // inline (not attachment) so the browser opens what it can render
-            // (PDF, images, text) in the tab and downloads the rest by name.
-            string safeName = Regex.Replace(attachmentName, @"[""\r\n\\]", "_");
-            req.HttpContext.Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+            // inline (the default) so the browser opens what it can render — PDF,
+            // images, text — in the tab and downloads the rest by name. dl=1 forces
+            // the save-file path for the explicit download control in the web part.
+            string disposition = IsDownload(req) ? "attachment" : "inline";
+            req.HttpContext.Response.Headers["Content-Disposition"] =
+                $"{disposition}; filename=\"{SanitizeFileName(attachmentName)}\"";
             return new FileContentResult(ms.ToArray(), contentType);
         }
 
         return new NotFoundObjectResult($"Attachment '{attachmentName}' was not found in the message.");
     }
 
+    // ── GET: the original .eml, as a download ────────────────────────────
+
+    private async Task<IActionResult> ServeEml(HttpRequest req)
+    {
+        string? storagePath = req.Query["path"];
+        if (string.IsNullOrWhiteSpace(storagePath))
+        {
+            return new BadRequestObjectResult("Provide a 'path' query parameter.");
+        }
+
+        var (bytes, blobName, error) = await LoadBlobBytes(storagePath);
+        if (error != null) { return error; }
+
+        // The stored bytes, not a MimeKit round-trip: re-serialising can normalise
+        // headers and re-encode parts, and this file is the firm's archived copy of
+        // the message. It should be exactly what was received.
+        string fileName = Path.GetFileName(blobName!);
+        if (string.IsNullOrWhiteSpace(fileName)) { fileName = "message.eml"; }
+        if (!fileName.EndsWith(".eml", StringComparison.OrdinalIgnoreCase)) { fileName += ".eml"; }
+
+        req.HttpContext.Response.Headers["Content-Disposition"] =
+            $"attachment; filename=\"{SanitizeFileName(fileName)}\"";
+        return new FileContentResult(bytes!, "message/rfc822");
+    }
+
+    private static bool IsDownload(HttpRequest req)
+    {
+        string? dl = req.Query["dl"];
+        return !string.IsNullOrEmpty(dl) && dl != "0" && !string.Equals(dl, "false", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Strips what would break the Content-Disposition header, and the
+    /// path separators that would let a crafted attachment name suggest a
+    /// directory to the browser.</summary>
+    internal static string SanitizeFileName(string name) =>
+        Regex.Replace(name, @"[""\r\n\\/]", "_");
+
     // ── Shared blob/MIME plumbing ────────────────────────────────────────
 
     private async Task<(MimeMessage? Message, IActionResult? Error)> LoadMessage(string storagePath)
+    {
+        var (bytes, _, error) = await LoadBlobBytes(storagePath);
+        if (error != null) { return (null, error); }
+        using var stream = new MemoryStream(bytes!);
+        return (MimeMessage.Load(stream), null);
+    }
+
+    /// <summary>Fetches the raw blob and the name it is stored under. Separate from
+    /// LoadMessage because the .eml download must serve the stored bytes rather than
+    /// a MimeKit re-serialisation of them.</summary>
+    private async Task<(byte[]? Bytes, string? BlobName, IActionResult? Error)> LoadBlobBytes(string storagePath)
     {
         string blobUrl;
         try
@@ -164,7 +225,7 @@ public class EmlPreviewFunc
         }
         catch (FormatException)
         {
-            return (null, new BadRequestObjectResult("storagePath is not a valid URL or base64 token."));
+            return (null, null, new BadRequestObjectResult("storagePath is not a valid URL or base64 token."));
         }
 
         string containerBase = Environment.GetEnvironmentVariable("MATTERS_CONTAINER_URL")
@@ -173,13 +234,13 @@ public class EmlPreviewFunc
         if (!blobUrl.StartsWith(containerBase, StringComparison.OrdinalIgnoreCase))
         {
             // Only serve blobs from the matters container, nothing else.
-            return (null, new BadRequestObjectResult("storagePath is outside the matters container."));
+            return (null, null, new BadRequestObjectResult("storagePath is outside the matters container."));
         }
 
         string connectionString = Environment.GetEnvironmentVariable("MATTERS_STORAGE_CONNECTION") ?? "";
         if (string.IsNullOrEmpty(connectionString))
         {
-            return (null, new ObjectResult(new { error = "MATTERS_STORAGE_CONNECTION app setting is not configured." }) { StatusCode = 500 });
+            return (null, null, new ObjectResult(new { error = "MATTERS_STORAGE_CONNECTION app setting is not configured." }) { StatusCode = 500 });
         }
 
         string blobName = Uri.UnescapeDataString(blobUrl.Substring(containerBase.Length));
@@ -189,17 +250,16 @@ public class EmlPreviewFunc
             var container = new BlobContainerClient(connectionString, "matters");
             using var stream = new MemoryStream();
             await container.GetBlobClient(blobName).DownloadToAsync(stream);
-            stream.Position = 0;
-            return (MimeMessage.Load(stream), null);
+            return (stream.ToArray(), blobName, null);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
-            return (null, new NotFoundObjectResult("The .eml blob was not found."));
+            return (null, null, new NotFoundObjectResult("The .eml blob was not found."));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed loading blob {BlobName}", blobName);
-            return (null, new ObjectResult(new { error = ex.Message }) { StatusCode = 500 });
+            return (null, null, new ObjectResult(new { error = ex.Message }) { StatusCode = 500 });
         }
     }
 

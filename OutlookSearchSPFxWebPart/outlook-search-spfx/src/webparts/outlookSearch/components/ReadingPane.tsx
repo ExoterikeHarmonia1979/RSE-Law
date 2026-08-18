@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Persona, PersonaSize, Icon, Spinner, SpinnerSize } from '@fluentui/react';
 import { IEmailItem, IEmailPreview } from '../models/IEmailItem';
 import { displayName, fileTypeIcon, fileTypeColor } from './EmailList';
+import { emlDownloadUrl, attachmentUrl } from '../services/downloadUrls';
 import styles from './OutlookSearch.module.scss';
 
 export interface IReadingPaneProps {
@@ -70,6 +71,17 @@ export const ReadingPane: React.FC<IReadingPaneProps> = (props) => {
     <div className={styles.readingPane}>
       <div className={styles.readingSubjectRow}>
         <h2 className={styles.readingSubject}>{subject}</h2>
+        {emlPreviewUrl && (
+          <a
+            className={styles.downloadEml}
+            href={emlDownloadUrl(emlPreviewUrl, item.storagePath)}
+            title="Download this message as a .eml file, with its attachments"
+            aria-label="Download message"
+          >
+            <Icon iconName="Download" className={styles.downloadEmlIcon} />
+            <span className={styles.downloadEmlText}>Download</span>
+          </a>
+        )}
       </div>
 
       <div className={styles.readingHeader}>
@@ -96,20 +108,30 @@ export const ReadingPane: React.FC<IReadingPaneProps> = (props) => {
                 </span>
               </>
             );
-            // Clicking opens the attachment via EmlPreviewFunc, which streams
-            // it with its real MIME type — PDFs/images render in the new tab,
-            // Office documents download under their original file name.
+            // The card opens the attachment via EmlPreviewFunc, which streams it
+            // with its real MIME type — PDFs/images render in the new tab, Office
+            // documents save under their original name. The icon beside it always
+            // saves, for the cases the browser would otherwise render in place.
             return emlPreviewUrl ? (
-              <a
-                key={a.name}
-                className={styles.attachmentCard}
-                href={`${emlPreviewUrl}&path=${encodeURIComponent(item.storagePath)}&att=${encodeURIComponent(a.name)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Open ${a.name}`}
-              >
-                {inner}
-              </a>
+              <span key={a.name} className={styles.attachmentCardWrap}>
+                <a
+                  className={styles.attachmentCard}
+                  href={attachmentUrl(emlPreviewUrl, item.storagePath, a.name, false)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open ${a.name}`}
+                >
+                  {inner}
+                </a>
+                <a
+                  className={styles.attachmentDownload}
+                  href={attachmentUrl(emlPreviewUrl, item.storagePath, a.name, true)}
+                  title={`Download ${a.name}`}
+                  aria-label={`Download ${a.name}`}
+                >
+                  <Icon iconName="Download" />
+                </a>
+              </span>
             ) : (
               <span key={a.name} className={styles.attachmentCard}>{inner}</span>
             );

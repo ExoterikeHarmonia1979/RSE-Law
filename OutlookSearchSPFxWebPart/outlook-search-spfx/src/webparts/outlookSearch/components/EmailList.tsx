@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Persona, PersonaSize, Icon, Spinner, SpinnerSize, DefaultButton, TooltipHost } from '@fluentui/react';
 import { IEmailItem } from '../models/IEmailItem';
+import { emlDownloadUrl, attachmentUrl } from '../services/downloadUrls';
 import styles from './OutlookSearch.module.scss';
 
 export interface IEmailListProps {
@@ -138,6 +139,19 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
                 onClick={() => onSelect(item)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(item); } }}
               >
+                {emlPreviewUrl && (
+                  <a
+                    className={styles.itemDownload}
+                    href={emlDownloadUrl(emlPreviewUrl, item.storagePath)}
+                    title="Download this message as a .eml file, with its attachments"
+                    aria-label={`Download ${item.subject || item.fileName}`}
+                    /* the row's own click selects it — downloading should not also
+                       change what is open in the reading pane */
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Icon iconName="Download" />
+                  </a>
+                )}
                 <Persona
                   text={sender}
                   size={PersonaSize.size32}
@@ -165,7 +179,7 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
                           {emlPreviewUrl ? (
                             <a
                               className={styles.itemAttachChip}
-                              href={`${emlPreviewUrl}&path=${encodeURIComponent(item.storagePath)}&att=${encodeURIComponent(name)}`}
+                              href={attachmentUrl(emlPreviewUrl, item.storagePath, name, false)}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation() /* open the file, don't just select the row */}
