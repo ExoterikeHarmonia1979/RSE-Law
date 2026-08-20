@@ -9,10 +9,22 @@ and raises one Service Bus event per message in exactly the shape Graph would se
 work is done by HTTP-Matter-On-Email-Receipt - the pipeline that already has managed-identity
 auth, peek-lock durability, and a single matter-matching implementation.
 
-Safe to re-run. Blob names are deterministic (matter + sanitised subject), so a message
-processed twice overwrites its own blob rather than duplicating it. There is no "processed"
-marker on the mailbox, so a repeat sweep genuinely reprocesses everything - that is the
-accepted trade-off for not moving or flagging anyone's mail.
+Safe to re-run. Blob names are deterministic (matter + sanitised subject + the tail of the
+Graph message id), so a message processed twice overwrites its OWN blob rather than
+duplicating it. There is no "processed" marker on the mailbox, so a repeat sweep genuinely
+reprocesses everything - that is the accepted trade-off for not moving or flagging anyone's
+mail.
+
+The message-id component was added 2026-08-20. Before it, the name was the subject alone,
+so two DIFFERENT messages sharing a subject - every reply in a thread - collapsed onto one
+blob and the archive kept only the last. A sweep run after that change writes each message
+to its own path, which is the point: it recovers the thread history that earlier sweeps
+silently discarded.
+
+Expect duplicates while both generations coexist. Mail archived before the change still
+sits under its old subject-only name, and this sweep writes it again under the new name;
+until the old-format blobs are removed, search returns both. The old ones are the copies
+WITHOUT a " [id]" suffix before .eml.
 
 Enqueue only. Nothing is read from or written to the mailbox.
 #>
