@@ -1,5 +1,9 @@
 # HTTP-Matter-On-Email-Receipt
 
+> This folder now holds two workflows. The other one, `Matters-Lookup-Sync`, feeds the
+> matter lookup list this one reads — see `Matters-Lookup-Sync.md`. `deploy.ps1` and
+> `drift.ps1` are shared; `validate.ps1` is specific to the workflow documented here.
+
 Files incoming matter email into blob storage. Consumes the `speventgridqueue` Service Bus
 queue, which is fed by Graph mail change-notification subscriptions across ~95 mailboxes via
 partner topic `GETopicRSEShared`.

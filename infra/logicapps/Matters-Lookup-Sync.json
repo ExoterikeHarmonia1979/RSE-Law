@@ -1,0 +1,517 @@
+{
+  "identity": {
+    "type": "SystemAssigned"
+  },
+  "location": "eastus",
+  "tags": {},
+  "properties": {
+    "state": "Enabled",
+    "parameters": {
+      "$connections": {
+        "value": {
+          "sharepointonline": {
+            "connectionId": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/resourceGroups/Sharepoint1/providers/Microsoft.Web/connections/sharepointonline",
+            "connectionName": "sharepointonline",
+            "connectionProperties": {},
+            "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
+          }
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "claimColumnName": {
+          "defaultValue": "Claim Number",
+          "type": "String"
+        },
+        "fileColumnName": {
+          "defaultValue": "RSE File #",
+          "type": "String"
+        },
+        "listGuid": {
+          "defaultValue": "940d4826-7cf4-4bf1-979e-f6d28f4ba1c9",
+          "type": "String"
+        },
+        "maxWritesPerRun": {
+          "defaultValue": 250,
+          "type": "Int"
+        },
+        "siteUrl": {
+          "defaultValue": "https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC",
+          "type": "String"
+        },
+        "workbookDriveId": {
+          "defaultValue": "b!3WCB7F4QOUy0ctjm7GNwCLwPAJi3WCNEr2GHuU7AbZ9EePhTjn9vRID5-M4AJs2V",
+          "type": "String"
+        },
+        "workbookItemId": {
+          "defaultValue": "0173CEA2QC7KJILOCGPRE2RIRAOROJVQV4",
+          "type": "String"
+        },
+        "workbookTableName": {
+          "defaultValue": "List26",
+          "type": "String"
+        }
+      },
+      "triggers": {
+        "Recurrence": {
+          "type": "Recurrence",
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 15
+          }
+        }
+      },
+      "actions": {
+        "Get_workbook_columns": {
+          "runAfter": {},
+          "type": "Http",
+          "inputs": {
+            "authentication": {
+              "audience": "https://graph.microsoft.com",
+              "type": "ManagedServiceIdentity"
+            },
+            "method": "GET",
+            "queries": {
+              "$select": "name,values"
+            },
+            "retryPolicy": {
+              "count": 4,
+              "interval": "PT20S",
+              "type": "exponential"
+            },
+            "uri": "https://graph.microsoft.com/v1.0/drives/@{parameters('workbookDriveId')}/items/@{parameters('workbookItemId')}/workbook/tables/@{parameters('workbookTableName')}/columns"
+          }
+        },
+        "Get_existing_list_items": {
+          "runAfter": {
+            "Get_workbook_columns": [
+              "Succeeded"
+            ]
+          },
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "get",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(parameters('siteUrl')))}/tables/@{encodeURIComponent(encodeURIComponent(parameters('listGuid')))}/items",
+            "queries": {
+              "$top": 5000
+            }
+          },
+          "runtimeConfiguration": {
+            "paginationPolicy": {
+              "minimumItemCount": 5000
+            }
+          }
+        },
+        "Filter_file_column": {
+          "runAfter": {
+            "Get_existing_list_items": [
+              "Succeeded"
+            ]
+          },
+          "type": "Query",
+          "inputs": {
+            "from": "@body('Get_workbook_columns')?['value']",
+            "where": "@equals(item()?['name'], parameters('fileColumnName'))"
+          }
+        },
+        "Filter_claim_column": {
+          "runAfter": {
+            "Get_existing_list_items": [
+              "Succeeded"
+            ]
+          },
+          "type": "Query",
+          "inputs": {
+            "from": "@body('Get_workbook_columns')?['value']",
+            "where": "@equals(item()?['name'], parameters('claimColumnName'))"
+          }
+        },
+        "Check_inputs": {
+          "runAfter": {
+            "Filter_claim_column": [
+              "Succeeded"
+            ],
+            "Filter_file_column": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "greater": [
+                  "@length(body('Filter_file_column'))",
+                  0
+                ]
+              },
+              {
+                "greater": [
+                  "@length(body('Filter_claim_column'))",
+                  0
+                ]
+              },
+              {
+                "greater": [
+                  "@length(body('Get_existing_list_items')?['value'])",
+                  0
+                ]
+              }
+            ]
+          },
+          "else": {
+            "actions": {
+              "Terminate_unusable_inputs": {
+                "runAfter": {},
+                "type": "Terminate",
+                "inputs": {
+                  "runError": {
+                    "code": "PreconditionFailed",
+                    "message": "Refusing to sync. Either a spreadsheet column was renamed (expected '@{parameters('fileColumnName')}' and '@{parameters('claimColumnName')}' in table '@{parameters('workbookTableName')}'), or the Matters Lookup read returned zero items. Zero items would make every sheet row look missing and create ~500 duplicates."
+                  },
+                  "runStatus": "Failed"
+                }
+              }
+            }
+          },
+          "actions": {
+            "Compose_file_values": {
+              "runAfter": {},
+              "type": "Compose",
+              "inputs": "@first(body('Filter_file_column'))?['values']"
+            },
+            "Compose_claim_values": {
+              "runAfter": {},
+              "type": "Compose",
+              "inputs": "@first(body('Filter_claim_column'))?['values']"
+            },
+            "Select_sheet_rows": {
+              "runAfter": {
+                "Compose_claim_values": [
+                  "Succeeded"
+                ],
+                "Compose_file_values": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@range(1, sub(min(length(outputs('Compose_file_values')), length(outputs('Compose_claim_values'))), 1))",
+                "select": {
+                  "ClaimNo": "@trim(string(outputs('Compose_claim_values')[item()][0]))",
+                  "RSEFileNo": "@trim(string(outputs('Compose_file_values')[item()][0]))"
+                }
+              }
+            },
+            "Filter_valid_rows": {
+              "runAfter": {
+                "Select_sheet_rows": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Select_sheet_rows')",
+                "where": "@not(equals(item()?['RSEFileNo'], ''))"
+              }
+            },
+            "Select_existing_files": {
+              "runAfter": {
+                "Filter_valid_rows": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Get_existing_list_items')?['value']",
+                "select": "@trim(coalesce(item()?['RSEFileNo'], ''))"
+              }
+            },
+            "Select_existing_pairs": {
+              "runAfter": {
+                "Select_existing_files": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Get_existing_list_items')?['value']",
+                "select": "@concat(trim(coalesce(item()?['RSEFileNo'], '')), '||', trim(coalesce(item()?['ClaimNo'], '')))"
+              }
+            },
+            "Filter_existing_blank_claim": {
+              "runAfter": {
+                "Select_existing_pairs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_existing_list_items')?['value']",
+                "where": "@equals(trim(coalesce(item()?['ClaimNo'], '')), '')"
+              }
+            },
+            "Select_existing_blank_claim_files": {
+              "runAfter": {
+                "Filter_existing_blank_claim": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_existing_blank_claim')",
+                "select": "@trim(coalesce(item()?['RSEFileNo'], ''))"
+              }
+            },
+            "Select_sheet_files": {
+              "runAfter": {
+                "Select_existing_blank_claim_files": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_valid_rows')",
+                "select": "@item()?['RSEFileNo']"
+              }
+            },
+            "Compose_distinct_sheet_files": {
+              "runAfter": {
+                "Select_sheet_files": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@union(body('Select_sheet_files'), body('Select_sheet_files'))"
+            },
+            "Filter_to_create": {
+              "runAfter": {
+                "Compose_distinct_sheet_files": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@outputs('Compose_distinct_sheet_files')",
+                "where": "@not(contains(body('Select_existing_files'), item()))"
+              }
+            },
+            "Filter_rows_with_claim": {
+              "runAfter": {
+                "Filter_to_create": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Filter_valid_rows')",
+                "where": "@not(equals(item()?['ClaimNo'], ''))"
+              }
+            },
+            "Select_sheet_pairs": {
+              "runAfter": {
+                "Filter_rows_with_claim": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_rows_with_claim')",
+                "select": "@concat(item()?['RSEFileNo'], '||', item()?['ClaimNo'])"
+              }
+            },
+            "Compose_distinct_sheet_pairs": {
+              "runAfter": {
+                "Select_sheet_pairs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@union(body('Select_sheet_pairs'), body('Select_sheet_pairs'))"
+            },
+            "Filter_to_update": {
+              "runAfter": {
+                "Compose_distinct_sheet_pairs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@outputs('Compose_distinct_sheet_pairs')",
+                "where": "@contains(body('Select_existing_blank_claim_files'), split(item(), '||')[0])"
+              }
+            },
+            "Filter_claim_conflicts": {
+              "runAfter": {
+                "Filter_to_update": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@outputs('Compose_distinct_sheet_pairs')",
+                "where": "@and(contains(body('Select_existing_files'), split(item(), '||')[0]), not(contains(body('Select_existing_blank_claim_files'), split(item(), '||')[0])), not(contains(body('Select_existing_pairs'), item())))"
+              }
+            },
+            "Compose_create_batch": {
+              "runAfter": {
+                "Filter_claim_conflicts": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@take(body('Filter_to_create'), parameters('maxWritesPerRun'))"
+            },
+            "Compose_update_batch": {
+              "runAfter": {
+                "Compose_create_batch": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@take(body('Filter_to_update'), parameters('maxWritesPerRun'))"
+            },
+            "For_each_new_matter": {
+              "runAfter": {
+                "Compose_update_batch": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach",
+              "foreach": "@outputs('Compose_create_batch')",
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 5
+                }
+              },
+              "actions": {
+                "Find_sheet_row_for_new_matter": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Filter_valid_rows')",
+                    "where": "@equals(item()?['RSEFileNo'], items('For_each_new_matter'))"
+                  }
+                },
+                "Create_item": {
+                  "runAfter": {
+                    "Find_sheet_row_for_new_matter": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "ClaimNo": "@{coalesce(first(body('Find_sheet_row_for_new_matter'))?['ClaimNo'], '')}",
+                      "RSEFileNo": "@{items('For_each_new_matter')}",
+                      "Title": "@{items('For_each_new_matter')}"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/datasets/@{encodeURIComponent(encodeURIComponent(parameters('siteUrl')))}/tables/@{encodeURIComponent(encodeURIComponent(parameters('listGuid')))}/items"
+                  }
+                }
+              }
+            },
+            "For_each_changed_claim": {
+              "runAfter": {
+                "Compose_update_batch": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Foreach",
+              "foreach": "@outputs('Compose_update_batch')",
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 5
+                }
+              },
+              "actions": {
+                "Find_sheet_row_for_changed_claim": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Filter_rows_with_claim')",
+                    "where": "@equals(concat(item()?['RSEFileNo'], '||', item()?['ClaimNo']), items('For_each_changed_claim'))"
+                  }
+                },
+                "Find_list_item_for_changed_claim": {
+                  "runAfter": {
+                    "Find_sheet_row_for_changed_claim": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_existing_list_items')?['value']",
+                    "where": "@equals(trim(coalesce(item()?['RSEFileNo'], '')), first(body('Find_sheet_row_for_changed_claim'))?['RSEFileNo'])"
+                  }
+                },
+                "Update_item": {
+                  "runAfter": {
+                    "Find_list_item_for_changed_claim": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "ClaimNo": "@{first(body('Find_sheet_row_for_changed_claim'))?['ClaimNo']}",
+                      "RSEFileNo": "@{first(body('Find_sheet_row_for_changed_claim'))?['RSEFileNo']}",
+                      "Title": "@{first(body('Find_sheet_row_for_changed_claim'))?['RSEFileNo']}"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                      }
+                    },
+                    "method": "patch",
+                    "path": "/datasets/@{encodeURIComponent(encodeURIComponent(parameters('siteUrl')))}/tables/@{encodeURIComponent(encodeURIComponent(parameters('listGuid')))}/items/@{encodeURIComponent(first(body('Find_list_item_for_changed_claim'))?['ID'])}"
+                  }
+                }
+              }
+            },
+            "Compose_run_summary": {
+              "runAfter": {
+                "For_each_changed_claim": [
+                  "Succeeded"
+                ],
+                "For_each_new_matter": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": {
+                "claimConflictsLeftAlone": "@length(body('Filter_claim_conflicts'))",
+                "createBacklog": "@sub(length(body('Filter_to_create')), length(outputs('Compose_create_batch')))",
+                "created": "@length(outputs('Compose_create_batch'))",
+                "distinctSheetFiles": "@length(outputs('Compose_distinct_sheet_files'))",
+                "existingListItems": "@length(body('Get_existing_list_items')?['value'])",
+                "sheetDataRows": "@length(body('Select_sheet_rows'))",
+                "updateBacklog": "@sub(length(body('Filter_to_update')), length(outputs('Compose_update_batch')))",
+                "updated": "@length(outputs('Compose_update_batch'))",
+                "validSheetRows": "@length(body('Filter_valid_rows'))"
+              }
+            }
+          }
+        }
+      },
+      "outputs": {}
+    }
+  }
+}

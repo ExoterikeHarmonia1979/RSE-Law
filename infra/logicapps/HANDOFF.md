@@ -219,8 +219,21 @@ New:
 ## Open items
 
 1. **Wait for the queue to drain, then confirm the re-file ran.** Both are automatic.
-2. **The lookup list is maintained by hand and lags newly opened matters.** Now known to gate
-   ~93% of the unsorted bucket. A real source of truth is the highest-value remaining fix.
+2. ~~**The lookup list is maintained by hand and lags newly opened matters.**~~ **Automated
+   2026-08-19** by `Matters-Lookup-Sync` — a second Logic App that reconciles the list against
+   the `LIST26.xlsx` intake sheet every 15 minutes. Backfill added 273 matters (1,045 → 1,318)
+   and filled 25 blank claim numbers. See `Matters-Lookup-Sync.md`.
+
+   **What is still manual, and is now the open part:** 171 matters where the sheet's claim
+   number disagrees with a non-blank value already in the list. The sync deliberately refuses
+   to overwrite these — in 117 of them the list's `ClaimNo` holds the *court case number*
+   while `CaseNo` holds the insurer claim, so the two columns are reversed relative to the
+   spreadsheet's meaning. Overwriting would delete 171 tokens the archive matches subjects
+   against. Each run reports the count as `claimConflictsLeftAlone`. Resolving these needs
+   someone to decide which column means what; a rule cannot.
+
+   Note this does not close the unsorted-bucket problem, it only removes the lag. 80.5% of
+   unsorted subjects still name no matter at all, which no lookup list can fix.
 3. **8 nested `.eml` + 13 zero-byte entries** stranded in `UnsortedMatterCommunication`.
 4. **`MimeKit 4.9.0`** has a known moderate-severity advisory.
 5. **Consider deleting `Sched Renew Graph API Subscription`** — stopped, superseded by
