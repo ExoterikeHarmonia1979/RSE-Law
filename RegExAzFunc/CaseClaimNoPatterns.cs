@@ -2,11 +2,26 @@
 // Generated from the CaseNo and ClaimNo columns of the SharePoint "Matters Lookup" list
 // (site: MatterExchange-POC). Patterns are generalized by structural shape rather than
 // literal carrier/court prefix, so a single pattern covers many distinct prefixes.
-// 10 patterns cover 1645 of 1648 distinct observed values (99.8%).
-// Known uncovered outliers (likely data-entry typos):
+// Regenerated 2026-08-19, after Matters-Lookup-Sync backfilled 273 matters from the intake
+// spreadsheet (list 1,045 -> 1,318 items). 10 patterns cover 1912 of 1928 distinct observed
+// values (99.2%). The additions brought one new structural family - a dash-separated claim
+// no carrying a two-digit reopen/sequence suffix (22-2384999-04) - which is why the
+// dash-separated pattern below gained an optional (-\d{1,3}) tail. That one change took
+// coverage back from 96.5% to 99.2%; no pattern was added or removed.
+//
+// Known uncovered outliers, all left uncovered on purpose:
 //   "00144258D" (numeric id with trailing letter, single occurrence)
-//   "25-99-798924" (irregular shape, single occurrence)
+//   "TBD" (placeholder, not an identifier)
+//   "AG11 L 08846" (embedded space, single occurrence)
+//   "25-99-798924", "26-99-607170" (\d{2}-\d{2}-\d{6}; covering these means loosening the
+//     middle group to \d{2,9}, which would match ordinary date-like tokens such as "10-15"
+//     in an email subject - two values are not worth that false-positive rate)
 //   "34-2022-00328746" (looks like a long-form case no missing its -XX-XXX-XXX suffix)
+//   11 cells holding SEVERAL claim numbers in one field, separated by "|", ";" or "/" and
+//     often with prose ("CORVEL CLAIM NO. 1106-AL-24-0300241 CR | JRIC CLAIM NO. 00183391").
+//     No anchored pattern can match these, and it is not a regex problem: the archive looks
+//     matters up with an exact-equality $filter on ClaimNo, so a multi-value cell is
+//     unfindable by either claim number it contains. These rows need splitting in the list.
 // </auto-generated>
 
 namespace RegExAzFunc
@@ -39,8 +54,9 @@ namespace RegExAzFunc
             // Dated claim id: 1106-AL-24-0300093
             @"^\d{4}-[A-Z]{2}-\d{2}-\d{7}(\s?[A-Z]{2,3})?$",
 
-            // Dash-separated claim no: 23-4226358, 24-216011247, 36508-0046, 40137-0124
-            @"^\d{2,5}-\d{4,9}$",
+            // Dash-separated claim no, with an optional reopen/sequence suffix:
+            // 23-4226358, 24-216011247, 36508-0046, 22-2384999-04, 24-200058910-05
+            @"^\d{2,5}-\d{4,9}(-\d{1,3})?$",
 
             // Code-segment id: 25-CIV-07139, S-CV-0056835
             @"^[A-Z0-9]{1,2}-[A-Z]{2,4}-\d{5,8}$",
