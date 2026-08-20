@@ -29,7 +29,9 @@
             }
           },
           "runAfter": {
-            "Process_Message": "Succeeded"
+            "Process_Message": [
+              "Succeeded"
+            ]
           },
           "type": "ApiConnection"
         },
@@ -57,7 +59,9 @@
                 "runStatus": "Succeeded"
               },
               "runAfter": {
-                "Complete_Stale_Notification": "Succeeded"
+                "Complete_Stale_Notification": [
+                  "Succeeded"
+                ]
               },
               "type": "Terminate"
             }
@@ -101,12 +105,14 @@
             }
           },
           "expression": {
-            "and": {
-              "equals": [
-                "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
-                404
-              ]
-            }
+            "and": [
+              {
+                "equals": [
+                  "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
+                  404
+                ]
+              }
+            ]
           },
           "runAfter": {
             "Process_Message": [
@@ -158,7 +164,9 @@
                 "operationMetadataId": "837619d7-80e3-46de-a10e-0a409f6292fa"
               },
               "runAfter": {
-                "Parse_JSON": "Succeeded"
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
               },
               "type": "Compose"
             },
@@ -173,7 +181,9 @@
                 "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
               },
               "runAfter": {
-                "Get_Message_ID": "Succeeded"
+                "Get_Message_ID": [
+                  "Succeeded"
+                ]
               },
               "type": "Compose"
             },
@@ -191,7 +201,9 @@
                   },
                   "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['ccRecipients']",
                   "runAfter": {
-                    "Get_Email_To": "Succeeded"
+                    "Get_Email_To": [
+                      "Succeeded"
+                    ]
                   },
                   "runtimeConfiguration": {
                     "concurrency": {
@@ -215,7 +227,9 @@
                   },
                   "foreach": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['toRecipients']",
                   "runAfter": {
-                    "Get_Email_From": "Succeeded"
+                    "Get_Email_From": [
+                      "Succeeded"
+                    ]
                   },
                   "runtimeConfiguration": {
                     "concurrency": {
@@ -227,7 +241,9 @@
                 "Get_Email_CC": {
                   "inputs": "@variables('strCC')",
                   "runAfter": {
-                    "For_each_CC": "Succeeded"
+                    "For_each_CC": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "Compose"
                 },
@@ -237,7 +253,9 @@
                     "operationMetadataId": "48d581f5-0397-4d46-8685-6d08174cc619"
                   },
                   "runAfter": {
-                    "Get_Email_Subject": "Succeeded"
+                    "Get_Email_Subject": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "Compose"
                 },
@@ -247,7 +265,9 @@
                     "operationMetadataId": "9382cd3a-413c-4701-8247-6fdb5976daf9"
                   },
                   "runAfter": {
-                    "Get_Email_CC": "Succeeded"
+                    "Get_Email_CC": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "Compose"
                 },
@@ -257,7 +277,9 @@
                     "operationMetadataId": "7a7402cc-d68c-4606-b5ad-33d7ae63bf87"
                   },
                   "runAfter": {
-                    "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": "Succeeded"
+                    "HTTP_Graph_API_Call_to_Get_Email_Message_via_User": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "Compose"
                 },
@@ -267,7 +289,9 @@
                     "operationMetadataId": "d0b0e6d7-611b-40f7-a9c7-ab9d8dbf9ca3"
                   },
                   "runAfter": {
-                    "For_each_Recipient": "Succeeded"
+                    "For_each_Recipient": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "Compose"
                 },
@@ -303,7 +327,9 @@
                             }
                           },
                           "runAfter": {
-                            "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": "Succeeded"
+                            "HTTP_Graph_API_Call_to_Get_Email_Message_Attachment_Content": [
+                              "Succeeded"
+                            ]
                           },
                           "type": "AppendToArrayVariable"
                         },
@@ -423,15 +449,19 @@
                     "actions": {}
                   },
                   "expression": {
-                    "and": {
-                      "equals": [
-                        "@outputs('Get_Email_Has_Attachments')",
-                        true
-                      ]
-                    }
+                    "and": [
+                      {
+                        "equals": [
+                          "@outputs('Get_Email_Has_Attachments')",
+                          true
+                        ]
+                      }
+                    ]
                   },
                   "runAfter": {
-                    "Get_Email_Has_Attachments": "Succeeded"
+                    "Get_Email_Has_Attachments": [
+                      "Succeeded"
+                    ]
                   },
                   "type": "If"
                 },
@@ -440,14 +470,18 @@
                     "Get_Reg_Ex_Match_All_Subject": {
                       "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['match']",
                       "runAfter": {
-                        "HTTP_Az_Func_Reg_Matter_Full_Subject_": "Succeeded"
+                        "HTTP_Az_Func_Reg_Matter_Full_Subject_": [
+                          "Succeeded"
+                        ]
                       },
                       "type": "Compose"
                     },
                     "Get_Reg_Ex_Match_Type": {
                       "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']",
                       "runAfter": {
-                        "Get_Reg_Ex_Match_All_Subject": "Succeeded"
+                        "Get_Reg_Ex_Match_All_Subject": [
+                          "Succeeded"
+                        ]
                       },
                       "type": "Compose"
                     },
@@ -488,14 +522,18 @@
                             }
                           },
                           "runAfter": {
-                            "HTTP_Graph_API_Call_to_Get_Email_Message_Value": "Succeeded"
+                            "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
+                              "Succeeded"
+                            ]
                           },
                           "type": "ApiConnection"
                         },
                         "Email_Blob_Name": {
-                          "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 180), substring(outputs('Email_Subject_Clean'), 0, 180), outputs('Email_Subject_Clean'))), '.eml')",
+                          "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', ''), '].eml')",
                           "runAfter": {
-                            "Email_Subject_Clean": "Succeeded"
+                            "Email_Subject_Clean": [
+                              "Succeeded"
+                            ]
                           },
                           "type": "Compose"
                         },
@@ -528,14 +566,18 @@
                                 }
                               },
                               "runAfter": {
-                                "Attachment_Name_Clean": "Succeeded"
+                                "Attachment_Name_Clean": [
+                                  "Succeeded"
+                                ]
                               },
                               "type": "ApiConnection"
                             }
                           },
                           "foreach": "@variables('arrAttachments')",
                           "runAfter": {
-                            "Create_blob_1": "Succeeded"
+                            "Create_blob_1": [
+                              "Succeeded"
+                            ]
                           },
                           "runtimeConfiguration": {
                             "concurrency": {
@@ -554,7 +596,9 @@
                             "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
                           },
                           "runAfter": {
-                            "Email_Blob_Name": "Succeeded"
+                            "Email_Blob_Name": [
+                              "Succeeded"
+                            ]
                           },
                           "runtimeConfiguration": {
                             "contentTransfer": {
@@ -600,7 +644,9 @@
                         ]
                       },
                       "runAfter": {
-                        "If_Subject_has_Reg_Ex_Match": "Succeeded"
+                        "If_Subject_has_Reg_Ex_Match": [
+                          "Succeeded"
+                        ]
                       },
                       "type": "If"
                     },
@@ -642,7 +688,9 @@
                                 "operationMetadataId": "c2ac5138-ee7b-4247-af73-9e6f6a67bfea"
                               },
                               "runAfter": {
-                                "Set_variable_blnFoundItem": "Succeeded"
+                                "Set_variable_blnFoundItem": [
+                                  "Succeeded"
+                                ]
                               },
                               "type": "SetVariable"
                             }
@@ -665,7 +713,9 @@
                                       "value": "@outputs('Get_Reg_Ex_Match_All_Subject')"
                                     },
                                     "runAfter": {
-                                      "Set_variable_blnFoundItem_Unlisted": "Succeeded"
+                                      "Set_variable_blnFoundItem_Unlisted": [
+                                        "Succeeded"
+                                      ]
                                     },
                                     "type": "SetVariable"
                                   }
@@ -674,12 +724,14 @@
                                   "actions": {}
                                 },
                                 "expression": {
-                                  "and": {
-                                    "equals": [
-                                      "@outputs('Get_Reg_Ex_Match_Type')",
-                                      "RSE File No"
-                                    ]
-                                  }
+                                  "and": [
+                                    {
+                                      "equals": [
+                                        "@outputs('Get_Reg_Ex_Match_Type')",
+                                        "RSE File No"
+                                      ]
+                                    }
+                                  ]
                                 },
                                 "runAfter": {},
                                 "type": "If"
@@ -687,17 +739,21 @@
                             }
                           },
                           "expression": {
-                            "and": {
-                              "not": {
-                                "equals": [
-                                  "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
-                                  0
-                                ]
+                            "and": [
+                              {
+                                "not": {
+                                  "equals": [
+                                    "@length(outputs('Get_items_In_LookUp_List')?['body/value'])",
+                                    0
+                                  ]
+                                }
                               }
-                            }
+                            ]
                           },
                           "runAfter": {
-                            "Get_items_In_LookUp_List": "Succeeded"
+                            "Get_items_In_LookUp_List": [
+                              "Succeeded"
+                            ]
                           },
                           "type": "If"
                         }
@@ -710,14 +766,18 @@
                               "select": "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')"
                             },
                             "runAfter": {
-                              "Candidate_Subject_Words": "Succeeded"
+                              "Candidate_Subject_Words": [
+                                "Succeeded"
+                              ]
                             },
                             "type": "Select"
                           },
                           "Candidate_Subject_Words": {
                             "inputs": "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)",
                             "runAfter": {
-                              "Filter_Subject_Words": "Succeeded"
+                              "Filter_Subject_Words": [
+                                "Succeeded"
+                              ]
                             },
                             "type": "Compose"
                           },
@@ -727,7 +787,9 @@
                               "where": "@greater(length(string(item())), 2)"
                             },
                             "runAfter": {
-                              "Split_Subject_into_array": "Succeeded"
+                              "Split_Subject_into_array": [
+                                "Succeeded"
+                              ]
                             },
                             "type": "Query"
                           },
@@ -761,7 +823,9 @@
                                               "value": "@false"
                                             },
                                             "runAfter": {
-                                              "Set_variable_strFoundMatter_1": "Succeeded"
+                                              "Set_variable_strFoundMatter_1": [
+                                                "Succeeded"
+                                              ]
                                             },
                                             "type": "SetVariable"
                                           },
@@ -771,7 +835,9 @@
                                               "value": "@first(body('Filter_Rows_Matching_Word'))?['RSEFileNo']"
                                             },
                                             "runAfter": {
-                                              "Set_variable_blnFoundItem_1": "Succeeded"
+                                              "Set_variable_blnFoundItem_1": [
+                                                "Succeeded"
+                                              ]
                                             },
                                             "type": "SetVariable"
                                           }
@@ -780,17 +846,21 @@
                                           "actions": {}
                                         },
                                         "expression": {
-                                          "and": {
-                                            "not": {
-                                              "equals": [
-                                                "@length(body('Filter_Rows_Matching_Word'))",
-                                                0
-                                              ]
+                                          "and": [
+                                            {
+                                              "not": {
+                                                "equals": [
+                                                  "@length(body('Filter_Rows_Matching_Word'))",
+                                                  0
+                                                ]
+                                              }
                                             }
-                                          }
+                                          ]
                                         },
                                         "runAfter": {
-                                          "Filter_Rows_Matching_Word": "Succeeded"
+                                          "Filter_Rows_Matching_Word": [
+                                            "Succeeded"
+                                          ]
                                         },
                                         "type": "If"
                                       }
@@ -799,12 +869,14 @@
                                       "actions": {}
                                     },
                                     "expression": {
-                                      "and": {
-                                        "equals": [
-                                          "@variables('blnKeepProcessing')",
-                                          "@true"
-                                        ]
-                                      }
+                                      "and": [
+                                        {
+                                          "equals": [
+                                            "@variables('blnKeepProcessing')",
+                                            "@true"
+                                          ]
+                                        }
+                                      ]
                                     },
                                     "runAfter": {},
                                     "type": "If"
@@ -812,7 +884,9 @@
                                 },
                                 "foreach": "@outputs('Candidate_Subject_Words')",
                                 "runAfter": {
-                                  "Get_items_In_LookUp_List_By_Subject_Word": "Succeeded"
+                                  "Get_items_In_LookUp_List_By_Subject_Word": [
+                                    "Succeeded"
+                                  ]
                                 },
                                 "runtimeConfiguration": {
                                   "concurrency": {
@@ -842,17 +916,21 @@
                               "actions": {}
                             },
                             "expression": {
-                              "and": {
-                                "not": {
-                                  "equals": [
-                                    "@length(outputs('Candidate_Subject_Words'))",
-                                    0
-                                  ]
+                              "and": [
+                                {
+                                  "not": {
+                                    "equals": [
+                                      "@length(outputs('Candidate_Subject_Words'))",
+                                      0
+                                    ]
+                                  }
                                 }
-                              }
+                              ]
                             },
                             "runAfter": {
-                              "Set_variable_blnKeepProcessing": "Succeeded"
+                              "Set_variable_blnKeepProcessing": [
+                                "Succeeded"
+                              ]
                             },
                             "type": "If"
                           },
@@ -862,7 +940,9 @@
                               "value": "@true"
                             },
                             "runAfter": {
-                              "Build_Lookup_Clauses": "Succeeded"
+                              "Build_Lookup_Clauses": [
+                                "Succeeded"
+                              ]
                             },
                             "type": "SetVariable"
                           },
@@ -893,7 +973,9 @@
                         ]
                       },
                       "runAfter": {
-                        "Get_Reg_Ex_Match_Type": "Succeeded"
+                        "Get_Reg_Ex_Match_Type": [
+                          "Succeeded"
+                        ]
                       },
                       "type": "If"
                     }
@@ -952,7 +1034,9 @@
                 ]
               },
               "runAfter": {
-                "Get_OData_ID": "Succeeded"
+                "Get_OData_ID": [
+                  "Succeeded"
+                ]
               },
               "type": "If"
             },
@@ -1078,13 +1162,17 @@
                 }
               },
               "runAfter": {
-                "Get_Message_JSON": "Succeeded"
+                "Get_Message_JSON": [
+                  "Succeeded"
+                ]
               },
               "type": "ParseJson"
             }
           },
           "runAfter": {
-            "Initialize_variables": "Succeeded"
+            "Initialize_variables": [
+              "Succeeded"
+            ]
           },
           "type": "Scope"
         }

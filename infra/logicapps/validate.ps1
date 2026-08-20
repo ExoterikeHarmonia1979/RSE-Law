@@ -16,8 +16,16 @@ function Walk($actions,$scopeName){
     $n=$pr.Name; $a=$pr.Value
     if($all.ContainsKey($n)){ Bad "duplicate action name '$n'" }
     $all[$n]=$a
-    foreach($ra in @($a.runAfter.PSObject.Properties.Name)){
+    foreach($pr2 in @($a.runAfter.PSObject.Properties)){
+      $ra = $pr2.Name
       if($ra -and $ra -notin $sib){ Bad "runAfter '$ra' on '$n' is not a sibling in $scopeName" }
+      # Must be an ARRAY of statuses. A bare string deploys as far as ARM and no further:
+      #   Error converting value "Succeeded" to type FlowStatus[]
+      # PowerShell unwraps single-element arrays on return, so the emit side can produce
+      # this without anyone touching the definition. Cheap to assert, invisible otherwise.
+      if($null -ne $pr2.Value -and $pr2.Value -isnot [object[]]){
+        Bad "runAfter '$ra' on '$n' is the scalar '$($pr2.Value)', not an array - ARM will reject this"
+      }
     }
     if($a.actions){ Walk $a.actions "$scopeName/$n" }
     if($a.else.actions){ Walk $a.else.actions "$scopeName/$n/else" }

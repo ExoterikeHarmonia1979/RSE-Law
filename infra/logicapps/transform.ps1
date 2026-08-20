@@ -105,12 +105,40 @@ $found.expression = @{
 # cap the stem so a very long subject / attachment name cannot exceed the blob name limit,
 # which would otherwise make that email permanently unarchivable
 function Cap([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, 0, $n), $e)" }
+# last $n characters - the distinguishing end of a Graph message id
+function Tail([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, sub(length($e), $n), $n), $e)" }
 # Cap inlines its argument three times, so the 42-replace sanitising chain is composed
 # once into its own action and capped by reference. Inlining it would emit ~126 nested
 # replace() calls per name and make the definition unreadable for no benefit.
 # trim last: capping at 180 can itself leave trailing whitespace on the stem
-$emlStem = "trim(" + (Cap "outputs('Email_Subject_Clean')" 180) + ")"
+$emlStem = "trim(" + (Cap "outputs('Email_Subject_Clean')" 150) + ")"
 $attStem = "trim(" + (Cap "outputs('Attachment_Name_Clean')" 180) + ")"
+
+<#
+The blob name must be unique per MESSAGE, not per subject.
+
+Naming by subject alone meant every reply in a thread wrote to the same path and
+silently overwrote the one before it. Measured on matter 120.058: 53 stored files
+representing 16 actual conversations, and the surviving copies quote threads 30
+messages deep. That is why the search web part returned far fewer results than the
+matters mailbox - the mailbox has one entry per message, the archive had one per
+subject line.
+
+The suffix is the tail of the Graph message id, which is the part that varies between
+messages in a mailbox. Deterministic per message on purpose: the same message always
+lands on the same blob, so re-running the sweep or replaying the dead-letter queue
+still overwrites rather than duplicates - the property the recovery scripts rely on.
+
+Versioning cannot backstop this. The storage account has hierarchical namespace
+enabled, so Azure blob versioning is unavailable on it ("FeatureNotSupportedForAccount").
+Uniqueness in the name is the only protection there is.
+
+The subject cap drops 180 -> 150 so names stay about the length they were.
+#>
+# Case is preserved deliberately. The id is base64, where case carries information, and
+# blob names are case-sensitive - lowercasing it would throw away entropy for tidiness.
+# Only the three characters that are awkward in a name are swapped out.
+$idTail = "replace(replace(replace(" + (Tail "coalesce(outputs('Get_Message_ID'),'')" 24) + ", '/', '_'), '+', '-'), '=', '')"
 
 $found.actions = @{
   Email_Subject_Clean = @{
@@ -121,7 +149,7 @@ $found.actions = @{
   Email_Blob_Name = @{
     type = 'Compose'
     runAfter = @{ Email_Subject_Clean = @('Succeeded') }
-    inputs = "@concat($emlStem, '.eml')"
+    inputs = "@concat($emlStem, ' [', $idTail, '].eml')"
   }
   HTTP_Graph_API_Call_to_Get_Email_Message_Value = @{
     type = 'Http'
