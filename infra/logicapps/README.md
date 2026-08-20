@@ -92,6 +92,25 @@ peek-lock trigger (concurrency 100)
 
 ## Things that will bite you
 
+**The mailbox is not the Inbox.** `matters@rse-law.com` holds ~198,000 messages across ~880
+non-empty folders, and only ~78,000 of them are in the Inbox. The rest sit in a `File
+Cabinet/<series>/<matter>` tree that staff file into by hand. Until 2026-08-20 the sweep
+walked `Inbox` only, non-recursively, so **60% of the mailbox had never been archived at
+all** — which is why users found far more in Outlook than in the search web part, and it is
+a much larger effect than the thread collapse described above.
+
+Measured on matter 119.014 when this was found: 272 messages mentioned it, 205 of them in
+`File Cabinet/119/119.014`, only 12 in the Inbox, and **none of those 12 carried the matter
+number in the subject** — so the sweep had filed nothing. The archive held 16 emails and the
+search returned 19 hits, against 271 in Outlook.
+
+**That folder tree is a matter classification somebody already made**, on ~119,600 messages,
+and the pipeline used to ignore it. `sweep-inbox.ps1 -AllFolders` now passes the folder's
+matter number as `Data.MatterHint`, and the workflow uses it *only* when subject matching has
+already failed (`If_No_Matter_Use_Folder_Hint`). Real Graph notifications carry no hint and
+behave exactly as before. This matters because the subject often does not name the matter at
+all: 52 of those 272 messages mention 119.014 only in the body or an attachment.
+
 **Most notifications are not archivable, and that is normal.** Roughly half of what arrives is
 a change notification for a message that no longer exists at that id — a draft that was sent, a
 message moved or deleted. Graph returns 404. These are completed, not retried: retrying cannot

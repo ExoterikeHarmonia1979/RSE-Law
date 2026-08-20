@@ -644,6 +644,55 @@
                         ]
                       },
                       "runAfter": {
+                        "If_No_Matter_Use_Folder_Hint": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If"
+                    },
+                    "If_No_Matter_Use_Folder_Hint": {
+                      "actions": {
+                        "Set_variable_blnFoundItem_Folder": {
+                          "inputs": {
+                            "name": "blnFoundItem",
+                            "value": "@true"
+                          },
+                          "runAfter": {},
+                          "type": "SetVariable"
+                        },
+                        "Set_variable_strFoundMatter_Folder": {
+                          "inputs": {
+                            "name": "strFoundMatter",
+                            "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+                          },
+                          "runAfter": {
+                            "Set_variable_blnFoundItem_Folder": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "SetVariable"
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@variables('blnFoundItem')",
+                              "@false"
+                            ]
+                          },
+                          {
+                            "equals": [
+                              "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], '')))",
+                              "@false"
+                            ]
+                          }
+                        ]
+                      },
+                      "runAfter": {
                         "If_Subject_has_Reg_Ex_Match": [
                           "Succeeded"
                         ]

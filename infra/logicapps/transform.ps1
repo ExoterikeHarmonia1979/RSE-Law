@@ -100,6 +100,52 @@ $found.expression = @{
   )
 }
 
+<#
+Fall back to the matter the mailbox itself already states.
+
+matters@rse-law.com files mail into a File Cabinet tree - File Cabinet/119/119.014 - which
+is a matter classification a person already made, on 119,573 messages. The pipeline ignored
+it and re-derived the matter from the subject line, which is why so much lands unsorted:
+for matter 119.014, 52 of 272 messages mention it only in the body or an attachment, and
+NONE of the twelve sitting in Inbox carry it in the subject at all.
+
+sweep-inbox.ps1 puts the folder's matter number in the synthetic notification as
+Data.MatterHint. This reads it back and uses it ONLY when subject resolution has already
+failed, so nothing about existing behaviour changes: real Graph notifications carry no hint
+and take exactly the path they did before.
+
+Read from the decoded body rather than body('Parse_JSON'), because the hint is not in that
+action's schema and relying on an unschema'd property surviving Parse_JSON would fail
+silently - the worst possible failure for a fallback.
+
+The hint's shape is validated in the sweep, where a real regex is available; Logic Apps has
+none. The write gate below still refuses an empty matter, so the blast radius of a bad hint
+is a wrongly-named folder, not a write to /matters//Emails/.
+#>
+$hint = "trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+$notEmpty.If_No_Matter_Use_Folder_Hint = @{
+  type = 'If'
+  runAfter = @{ If_Subject_has_Reg_Ex_Match = @('Succeeded') }
+  expression = @{ and = @(
+    @{ equals = @('@variables(''blnFoundItem'')', '@false') }
+    @{ equals = @("@empty($hint)", '@false') }
+  ) }
+  actions = @{
+    Set_variable_blnFoundItem_Folder = @{
+      type = 'SetVariable'; runAfter = @{}
+      inputs = @{ name = 'blnFoundItem'; value = '@true' }
+    }
+    Set_variable_strFoundMatter_Folder = @{
+      type = 'SetVariable'
+      runAfter = @{ Set_variable_blnFoundItem_Folder = @('Succeeded') }
+      inputs = @{ name = 'strFoundMatter'; value = "@$hint" }
+    }
+  }
+  else = @{ actions = @{} }
+}
+# the write gate now waits on the fallback rather than on subject resolution alone
+$found.runAfter = @{ If_No_Matter_Use_Folder_Hint = @('Succeeded') }
+
 # Collapse the two duplicate branches (site-exists / new-site) into one blob path.
 # Kept: the sanitised .eml write and the attachment loop. Dropped: their byte-identical twins.
 # cap the stem so a very long subject / attachment name cannot exceed the blob name limit,

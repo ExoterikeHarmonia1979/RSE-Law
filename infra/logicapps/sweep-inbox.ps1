@@ -32,8 +32,11 @@ param(
   [string]$Mailbox   = 'matters@rse-law.com',
   [string]$Folder    = 'Inbox',
   [int]$Max          = 1000,        # messages to enqueue this run
-  [int]$Skip         = 0,           # resume point, in messages
+  [int]$Skip         = 0,           # resume point, in messages (single-folder mode only)
   [int]$BatchSize    = 100,         # Service Bus accepts a batched send
+  [switch]$AllFolders,              # walk every folder, not just $Folder
+  [string]$OnlyPath,                # -AllFolders: restrict to folder paths containing this
+  [string]$StateFile,               # -AllFolders: record finished folders so a re-run resumes
   [switch]$Execute                  # dry run unless set
 )
 $ErrorActionPreference = 'Stop'
@@ -69,60 +72,139 @@ function Send-Batch($items) {
     -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -ErrorAction Stop | Out-Null
 }
 
-# --- walk the folder, oldest first so the backlog drains in arrival order
-$url  = "https://graph.microsoft.com/v1.0/users/$uid/mailFolders/$Folder/messages" +
-        "?`$select=id&`$top=999&`$orderby=receivedDateTime asc"
-$seen = 0; $queued = 0; $batch = @(); $errors = 0
+# The File Cabinet tree is a matter classification a person already made - folder leaves are
+# matter numbers ("119.014", occasionally with a stray leading space). Anything that is not a
+# well-formed RSE file number yields NO hint: no hint is recoverable, a wrong one files mail
+# under someone else's matter.
+function Get-MatterHint([string]$leaf) {
+  $t = "$leaf".Trim()
+  if ($t -match '^\d{2,3}[A-Z]?\.\d{3,4}[A-Z]?$') { return $t }
+  ''
+}
 
-while ($url) {
-  $page = Invoke-RestMethod -Uri $url -Headers $gh
-  foreach ($m in $page.value) {
-    $seen++
-    if ($seen -le $Skip) { continue }
-    if ($queued -ge $Max) { break }
+# Folders whose contents are not matter correspondence. Skipping a folder skips its children.
+$skipNames = @('Drafts','Deleted Items','Junk Email','Outbox','Conversation History',
+               'Sync Issues','Recoverable Items','RSS Feeds','Clutter','Scheduled')
 
-    $resource = "Users/$uid/Messages/$($m.id)"
-    # Shaped to match a real Graph change notification; the workflow reads
-    # data.ResourceData['@odata.id'] and data.ResourceData.Id from this.
-    $evt = [ordered]@{
-      type            = 'Microsoft.Graph.MessageCreated'
-      specversion     = '1.0'
-      source          = "/tenants/$tenant/applications/$appId"
-      subject         = $resource
-      id              = [guid]::NewGuid().ToString()
-      time            = (Get-Date).ToUniversalTime().ToString('o')
-      datacontenttype = 'application/json'
-      data            = [ordered]@{
-        SubscriptionId                 = 'inbox-sweep'
-        SubscriptionExpirationDateTime = (Get-Date).ToUniversalTime().AddDays(1).ToString('o')
-        ChangeType                     = 'created'
-        Resource                       = $resource
-        ResourceData                   = [ordered]@{
-          '@odata.type' = '#Microsoft.Graph.Message'
-          '@odata.id'   = $resource
-          'Id'          = $m.id
+$script:targets = @()
+function Add-Folders($url, $prefix) {
+  $u = $url
+  while ($u) {
+    $p = Invoke-RestMethod -Uri $u -Headers $gh
+    foreach ($f in $p.value) {
+      $leaf = "$($f.displayName)".Trim()
+      if ($skipNames -contains $leaf) { continue }
+      $path = if ($prefix) { "$prefix/$leaf" } else { $leaf }
+      if ($f.totalItemCount -gt 0) {
+        $script:targets += [pscustomobject]@{
+          Id = $f.id; Path = $path; Count = $f.totalItemCount; Hint = (Get-MatterHint $leaf)
         }
       }
-    } | ConvertTo-Json -Depth 8 -Compress
-
-    $batch += $evt
-    $queued++
-
-    if ($batch.Count -ge $BatchSize) {
-      if ($Execute) {
-        try { Send-Batch $batch } catch { Write-Warning $_.Exception.Message; $errors++ }
+      if ($f.childFolderCount -gt 0) {
+        Add-Folders "https://graph.microsoft.com/v1.0/users/$uid/mailFolders/$($f.id)/childFolders?`$top=100" $path
       }
-      $batch = @()
-      Write-Host "  queued $queued / $Max"
     }
+    $u = $p.'@odata.nextLink'
   }
+}
+
+if ($AllFolders) {
+  Add-Folders "https://graph.microsoft.com/v1.0/users/$uid/mailFolders?`$top=100" ''
+  if ($OnlyPath) {
+    $script:targets = @($script:targets | Where-Object { $_.Path -like "*$OnlyPath*" })
+    Write-Host "restricted to paths containing '$OnlyPath'"
+  }
+  $withHint = @($script:targets | Where-Object { $_.Hint -ne '' })
+  Write-Host ("folders to sweep: {0} ({1} messages); {2} carry a matter number ({3} messages)" -f `
+    $script:targets.Count, (($script:targets | Measure-Object Count -Sum).Sum),
+    $withHint.Count, (($withHint | Measure-Object Count -Sum).Sum))
+} else {
+  $script:targets = @([pscustomobject]@{ Id = $Folder; Path = $Folder; Count = -1; Hint = '' })
+}
+
+# --- resume support: a 198k-message sweep should never redo folders it already sent
+$done = @{}
+if ($StateFile -and (Test-Path $StateFile)) {
+  foreach ($l in (Get-Content $StateFile)) { if ("$l".Trim()) { $done["$l".Trim()] = $true } }
+  Write-Host "resuming: $($done.Count) folders already completed"
+}
+
+# --- walk, oldest first so the backlog drains in arrival order
+$seen = 0; $queued = 0; $errors = 0; $batch = @(); $fIndex = 0
+foreach ($t in $script:targets) {
+  $fIndex++
   if ($queued -ge $Max) { break }
-  $url = $page.'@odata.nextLink'
+  if ($done.ContainsKey($t.Id)) { continue }
+
+  $url = "https://graph.microsoft.com/v1.0/users/$uid/mailFolders/$($t.Id)/messages" +
+         "?`$select=id&`$top=999&`$orderby=receivedDateTime asc"
+  $fQueued = 0
+  while ($url) {
+    $page = Invoke-RestMethod -Uri $url -Headers $gh
+    foreach ($m in $page.value) {
+      $seen++
+      if (-not $AllFolders -and $seen -le $Skip) { continue }
+      if ($queued -ge $Max) { break }
+
+      $resource = "Users/$uid/Messages/$($m.id)"
+      # Shaped to match a real Graph change notification; the workflow reads
+      # data.ResourceData['@odata.id'] and data.ResourceData.Id from this.
+      # MatterHint is ours and is absent from real notifications - the workflow uses it
+      # only when subject matching has already failed.
+      $evt = [ordered]@{
+        type            = 'Microsoft.Graph.MessageCreated'
+        specversion     = '1.0'
+        source          = "/tenants/$tenant/applications/$appId"
+        subject         = $resource
+        id              = [guid]::NewGuid().ToString()
+        time            = (Get-Date).ToUniversalTime().ToString('o')
+        datacontenttype = 'application/json'
+        data            = [ordered]@{
+          SubscriptionId                 = 'mailbox-sweep'
+          SubscriptionExpirationDateTime = (Get-Date).ToUniversalTime().AddDays(1).ToString('o')
+          ChangeType                     = 'created'
+          Resource                       = $resource
+          MatterHint                     = $t.Hint
+          ResourceData                   = [ordered]@{
+            '@odata.type' = '#Microsoft.Graph.Message'
+            '@odata.id'   = $resource
+            'Id'          = $m.id
+          }
+        }
+      } | ConvertTo-Json -Depth 8 -Compress
+
+      $batch += $evt
+      $queued++; $fQueued++
+
+      if ($batch.Count -ge $BatchSize) {
+        if ($Execute) {
+          try { Send-Batch $batch } catch { Write-Warning $_.Exception.Message; $errors++ }
+        }
+        $batch = @()
+      }
+    }
+    if ($queued -ge $Max) { break }
+    $url = $page.'@odata.nextLink'
+  }
+
+  # Flush before recording the folder as done, or the state file would claim messages that
+  # were never sent and a resume would skip them for good.
+  if ($batch.Count -gt 0 -and $Execute) {
+    try { Send-Batch $batch } catch { Write-Warning $_.Exception.Message; $errors++ }
+  }
+  $batch = @()
+
+  $complete = ($queued -lt $Max)
+  if ($StateFile -and $Execute -and $complete) { Add-Content -Path $StateFile -Value $t.Id }
+  if ($AllFolders) {
+    Write-Host ("  [{0}/{1}] {2,-46} queued {3,5}  total {4}{5}" -f `
+      $fIndex, $script:targets.Count, $t.Path, $fQueued, $queued,
+      $(if ($t.Hint) { "  hint=$($t.Hint)" } else { '' }))
+  } else {
+    Write-Host "  queued $queued / $Max"
+  }
 }
 
-if ($batch.Count -gt 0 -and $Execute) {
-  try { Send-Batch $batch } catch { Write-Warning $_.Exception.Message; $errors++ }
-}
-
-Write-Host ("{0}: scanned={1} queued={2} errors={3}  (resume with -Skip {4})" -f `
-  $(if ($Execute) { 'EXECUTED' } else { 'DRY RUN' }), $seen, $queued, $errors, ($Skip + $queued))
+Write-Host ("{0}: scanned={1} queued={2} errors={3}{4}" -f `
+  $(if ($Execute) { 'EXECUTED' } else { 'DRY RUN' }), $seen, $queued, $errors,
+  $(if ($AllFolders) { '' } else { "  (resume with -Skip $($Skip + $queued))" }))

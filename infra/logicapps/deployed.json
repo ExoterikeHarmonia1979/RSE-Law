@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-20T15:49:34.2385421Z",
+  "capturedUtc": "2026-08-20T16:33:24.3496717Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -639,7 +639,7 @@
                       }
                     },
                     "runAfter": {
-                      "If_Subject_has_Reg_Ex_Match": [
+                      "If_No_Matter_Use_Folder_Hint": [
                         "Succeeded"
                       ]
                     },
@@ -675,6 +675,55 @@
                               "CALENDAR"
                             ]
                           }
+                        }
+                      ]
+                    },
+                    "type": "If"
+                  },
+                  "If_No_Matter_Use_Folder_Hint": {
+                    "actions": {
+                      "Set_variable_blnFoundItem_Folder": {
+                        "runAfter": {},
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "blnFoundItem",
+                          "value": "@true"
+                        }
+                      },
+                      "Set_variable_strFoundMatter_Folder": {
+                        "runAfter": {
+                          "Set_variable_blnFoundItem_Folder": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "strFoundMatter",
+                          "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "If_Subject_has_Reg_Ex_Match": [
+                        "Succeeded"
+                      ]
+                    },
+                    "else": {
+                      "actions": {}
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "equals": [
+                            "@variables('blnFoundItem')",
+                            "@false"
+                          ]
+                        },
+                        {
+                          "equals": [
+                            "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], '')))",
+                            "@false"
+                          ]
                         }
                       ]
                     },
