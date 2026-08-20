@@ -100,6 +100,33 @@ drive and 404s. That is why `workbookDriveId` is pinned.
 the connection the archive already depends on, so no second SharePoint credential exists to
 expire. It does mean writes run as `SharePoint@rse-law.com`.
 
+## Working the conflicts
+
+`claimConflictsLeftAlone` is a number in a run summary; `export-conflicts.ps1` turns it
+into something a person can act on.
+
+```powershell
+./export-conflicts.ps1                              # dated .xlsx in the current directory
+./export-conflicts.ps1 -OutFile C:\some\where.xlsx
+```
+
+Two sheets: a summary explaining what the rows are, and every conflict with a frozen
+header and autofilter, sorted into categories — `Columns reversed` (the sheet value is
+already in `CaseNo`), `Suffix drift`, `CaseNo blank`, `Conflicting values` — each with a
+suggested action and a link straight to the list row. Deciding a whole category at once is
+faster than going matter by matter.
+
+**The output holds client names and matter numbers. Do not commit it.** The last one went
+to `OutlookSearchSPFxWebPart/FIles/`, which `.gitignore` already excludes.
+
+Re-run it as the list changes; it reads both sides live and holds no state.
+
+Two things in that script look roundabout and are not, both documented in its header: it
+reads the list through a throwaway Logic App (the interactive `az` sign-in gets 403 on this
+list — no `Sites.*` scope — while the `sharepointonline` connection reads it fine), and it
+writes the `.xlsx` as OOXML by hand (Excel COM is installed on this machine but
+non-functional: `Workbooks.Add()` returns null, so Excel cannot create a file at all).
+
 ## Recovery
 
 Re-running is always safe — it computes what is missing from live state each time and holds
