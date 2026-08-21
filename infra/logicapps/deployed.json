@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-20T16:33:24.3496717Z",
+  "capturedUtc": "2026-08-21T03:25:30.9938869Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -699,7 +699,7 @@
                         "type": "SetVariable",
                         "inputs": {
                           "name": "strFoundMatter",
-                          "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+                          "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], ''))"
                         }
                       }
                     },
@@ -721,7 +721,7 @@
                         },
                         {
                           "equals": [
-                            "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], '')))",
+                            "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], '')))",
                             "@false"
                           ]
                         }
@@ -1139,6 +1139,12 @@
                         ]
                       },
                       "clientState": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "MatterHint": {
                         "type": [
                           "string",
                           "null"

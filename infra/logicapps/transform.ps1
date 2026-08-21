@@ -118,11 +118,33 @@ Read from the decoded body rather than body('Parse_JSON'), because the hint is n
 action's schema and relying on an unschema'd property surviving Parse_JSON would fail
 silently - the worst possible failure for a fallback.
 
+CASING IS LOAD-BEARING. The payload key is lowercase 'data'. Property access on a raw
+json() result is CASE-SENSITIVE, unlike body('Parse_JSON'), where the schema normalises it -
+which is why the surrounding code gets away with ?['Data'] and this cannot. The first
+version of this read ?['Data'] and therefore returned null on every single message: the
+fallback never once fired, and 64 messages out of File Cabinet/99/99.103 - whose subjects
+say "RSE99.103", with no space, so subject matching cannot resolve them - went to
+UnsortedMatterCommunication exactly as they had before. Both casings are accepted below so
+that a future change to the emitter cannot silently disarm this again.
+
+
 The hint's shape is validated in the sweep, where a real regex is available; Logic Apps has
 none. The write gate below still refuses an empty matter, so the blast radius of a bad hint
 is a wrongly-named folder, not a write to /matters//Emails/.
 #>
-$hint = "trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+# Declare the hint in Parse_JSON's schema so body('Parse_JSON') is a genuine second source
+# rather than a hope. Three sources, because this fallback failing silently is exactly the
+# bug that already cost a full re-sweep: lowercase raw (what the sweep emits), uppercase raw,
+# then the schema-backed parse.
+$pjProps = $root.Parse_JSON.inputs.schema.properties
+foreach ($k in @('data','Data')) {
+  if ($pjProps.ContainsKey($k) -and $pjProps[$k].properties) {
+    $pjProps[$k].properties['MatterHint'] = @{ type = @('string','null') }
+  }
+}
+$hint = "trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], " +
+        "json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], " +
+        "body('Parse_JSON')?['Data']?['MatterHint'], ''))"
 $notEmpty.If_No_Matter_Use_Folder_Hint = @{
   type = 'If'
   runAfter = @{ If_Subject_has_Reg_Ex_Match = @('Succeeded') }

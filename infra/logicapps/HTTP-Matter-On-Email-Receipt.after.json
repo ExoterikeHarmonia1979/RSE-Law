@@ -663,7 +663,7 @@
                         "Set_variable_strFoundMatter_Folder": {
                           "inputs": {
                             "name": "strFoundMatter",
-                            "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], ''))"
+                            "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], ''))"
                           },
                           "runAfter": {
                             "Set_variable_blnFoundItem_Folder": [
@@ -686,7 +686,7 @@
                           },
                           {
                             "equals": [
-                              "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], '')))",
+                              "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], '')))",
                               "@false"
                             ]
                           }
@@ -1103,6 +1103,12 @@
                           ]
                         },
                         "clientState": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "MatterHint": {
                           "type": [
                             "string",
                             "null"
