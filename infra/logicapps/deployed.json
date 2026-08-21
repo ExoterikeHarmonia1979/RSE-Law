@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-21T03:25:30.9938869Z",
+  "capturedUtc": "2026-08-21T13:10:44.7915711Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -714,9 +714,19 @@
                     "expression": {
                       "and": [
                         {
-                          "equals": [
-                            "@variables('blnFoundItem')",
-                            "@false"
+                          "or": [
+                            {
+                              "equals": [
+                                "@variables('blnFoundItem')",
+                                "@false"
+                              ]
+                            },
+                            {
+                              "equals": [
+                                "@trim(coalesce(variables('strFoundMatter'),''))",
+                                "UnsortedMatterCommunication"
+                              ]
+                            }
                           ]
                         },
                         {

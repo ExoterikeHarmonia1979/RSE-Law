@@ -679,9 +679,19 @@
                       "expression": {
                         "and": [
                           {
-                            "equals": [
-                              "@variables('blnFoundItem')",
-                              "@false"
+                            "or": [
+                              {
+                                "equals": [
+                                  "@variables('blnFoundItem')",
+                                  "@false"
+                                ]
+                              },
+                              {
+                                "equals": [
+                                  "@trim(coalesce(variables('strFoundMatter'),''))",
+                                  "UnsortedMatterCommunication"
+                                ]
+                              }
                             ]
                           },
                           {

@@ -148,8 +148,28 @@ $hint = "trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint']
 $notEmpty.If_No_Matter_Use_Folder_Hint = @{
   type = 'If'
   runAfter = @{ If_Subject_has_Reg_Ex_Match = @('Succeeded') }
+  <#
+  "Not found" is not the only failure. The regex function does not return empty for a
+  subject it cannot resolve - it returns the literal string UnsortedMatterCommunication,
+  and the lookup list contains a row whose RSEFileNo is exactly that (item 185). So an
+  unresolvable subject resolves as a perfectly valid matter: blnFoundItem becomes true,
+  strFoundMatter becomes the placeholder, and the mail is filed under
+  /matters/UnsortedMatterCommunication/.
+
+  Gating the fallback on blnFoundItem alone therefore made it unreachable for exactly the
+  mail it was written for. Traced on a real run: subject
+  "RE: Trial Subpoena to Rick Marcus in the Gougerchian case; RSE99.103" -> regex match
+  "UnsortedMatterCommunication" -> found in list -> hint skipped -> filed unsorted, with a
+  perfectly good MatterHint of 99.103 sitting unused in the payload.
+
+  The placeholder must therefore count as "no matter yet". A real matter still wins: this
+  only overrides the placeholder, never a genuine match.
+  #>
   expression = @{ and = @(
-    @{ equals = @('@variables(''blnFoundItem'')', '@false') }
+    @{ or = @(
+      @{ equals = @('@variables(''blnFoundItem'')', '@false') }
+      @{ equals = @('@trim(coalesce(variables(''strFoundMatter''),''''))', 'UnsortedMatterCommunication') }
+    ) }
     @{ equals = @("@empty($hint)", '@false') }
   ) }
   actions = @{
