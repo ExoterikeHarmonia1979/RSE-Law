@@ -36,6 +36,7 @@ param(
   [int]$BatchSize    = 100,         # Service Bus accepts a batched send
   [switch]$AllFolders,              # walk every folder, not just $Folder
   [string]$OnlyPath,                # -AllFolders: restrict to folder paths containing this
+  [string]$RestrictToTails,         # file of blob id-suffixes; enqueue only those messages
   [string]$StateFile,               # -AllFolders: record finished folders so a re-run resumes
   [switch]$Execute                  # dry run unless set
 )
@@ -122,6 +123,30 @@ if ($AllFolders) {
   $script:targets = @([pscustomobject]@{ Id = $Folder; Path = $Folder; Count = -1; Hint = '' })
 }
 
+<#
+Re-send only specific messages, identified by the suffix in their blob name.
+
+Blob names end in " [<tail>].eml" where <tail> is what Email_Blob_Name builds from the Graph
+message id. Reproducing that transform here lets a blob be mapped back to the message that
+produced it, so a targeted re-run can cover exactly the mail a bug mis-filed instead of
+re-processing the whole File Cabinet - roughly a tenth of the work.
+
+This MUST match transform.ps1's $idTail exactly. If that changes, change this:
+    last 24 chars, then '/'->'_', '+'->'-', '=' dropped
+#>
+function Get-IdTail([string]$id) {
+  $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
+  $t.Replace('/','_').Replace('+','-').Replace('=','')
+}
+$tailSet = $null
+if ($RestrictToTails) {
+  if (-not (Test-Path $RestrictToTails)) { throw "no tails file at $RestrictToTails" }
+  $tailSet = @{}
+  foreach ($l in (Get-Content $RestrictToTails)) { if ("$l".Trim()) { $tailSet["$l".Trim()] = $true } }
+  Write-Host "restricted to $($tailSet.Count) message id-suffixes"
+  if ($StateFile) { Write-Host "note: -StateFile is ignored in this mode (folders are only partly covered)"; $StateFile = '' }
+}
+
 # --- resume support: a 198k-message sweep should never redo folders it already sent
 $done = @{}
 if ($StateFile -and (Test-Path $StateFile)) {
@@ -145,6 +170,7 @@ foreach ($t in $script:targets) {
       $seen++
       if (-not $AllFolders -and $seen -le $Skip) { continue }
       if ($queued -ge $Max) { break }
+      if ($tailSet -and -not $tailSet.ContainsKey((Get-IdTail $m.id))) { continue }
 
       $resource = "Users/$uid/Messages/$($m.id)"
       # Shaped to match a real Graph change notification; the workflow reads
