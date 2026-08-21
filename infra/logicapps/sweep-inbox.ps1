@@ -166,7 +166,7 @@ $seen = 0; $queued = 0; $errors = 0; $batch = @(); $fIndex = 0
 # Blob names are unique per message only if the id tail is. Two messages in the SAME matter
 # with the same tail AND the same subject would collide onto one blob - the exact defect the
 # suffix was added to fix. Counting them here costs nothing on a walk we are doing anyway.
-$tailsSeen = @{}; $tailCollisions = 0
+$tailsSeen = @{}; $tailCollisions = 0; $idsSeen = @{}; $pagingDupes = 0
 foreach ($t in $script:targets) {
   $fIndex++
   if ($queued -ge $Max) { break }
@@ -181,9 +181,17 @@ foreach ($t in $script:targets) {
       $seen++
       if (-not $AllFolders -and $seen -le $Skip) { continue }
       if ($queued -ge $Max) { break }
+      # Deduplicate by message id FIRST. Graph paging hands back the same message more than
+      # once - no stable sort, live folder - and counting those as collisions reported 3,327
+      # of them where a dedup'd re-measure found exactly zero. A false alarm here would send
+      # someone rewriting a naming scheme that is fine.
       $mTail = Get-IdTail $m.id
-      $tKey = "$($t.Hint)|$mTail"
-      if ($tailsSeen.ContainsKey($tKey)) { $tailCollisions++ } else { $tailsSeen[$tKey] = $true }
+      if ($idsSeen.ContainsKey($m.id)) { $pagingDupes++ }
+      else {
+        $idsSeen[$m.id] = $true
+        $tKey = "$($t.Hint)|$mTail"
+        if ($tailsSeen.ContainsKey($tKey)) { $tailCollisions++ } else { $tailsSeen[$tKey] = $true }
+      }
       if ($tailSet -and -not $tailSet.ContainsKey($mTail)) { continue }
 
       $resource = "Users/$uid/Messages/$($m.id)"
@@ -248,8 +256,9 @@ foreach ($t in $script:targets) {
 Write-Host ("{0}: scanned={1} queued={2} errors={3}{4}" -f `
   $(if ($Execute) { 'EXECUTED' } else { 'DRY RUN' }), $seen, $queued, $errors,
   $(if ($AllFolders) { '' } else { "  (resume with -Skip $($Skip + $queued))" }))
-Write-Host ("id-tail uniqueness: {0} distinct (matter,tail) pairs over {1} messages; COLLISIONS={2}" -f `
-  $tailsSeen.Count, $seen, $tailCollisions)
+Write-Host ("id-tail uniqueness: {0} distinct (matter,tail) pairs over {1} distinct messages; COLLISIONS={2} (paging duplicates excluded: {3})" -f `
+  $tailsSeen.Count, $idsSeen.Count, $tailCollisions, $pagingDupes)
 if ($tailCollisions -gt 0) {
   Write-Host "  a collision means two messages in one matter can share a blob name - the suffix is too short" -ForegroundColor Yellow
 }
+
