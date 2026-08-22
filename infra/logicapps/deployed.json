@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-21T13:10:44.7915711Z",
+  "capturedUtc": "2026-08-22T04:42:34.8612875Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -519,7 +519,7 @@
                     "type": "Http",
                     "inputs": {
                       "body": {
-                        "strData": "@{outputs('Get_Email_Subject')}"
+                        "strData": "@{outputs('Subject_For_Matching')}"
                       },
                       "headers": {
                         "Accept": "application/json"
@@ -570,7 +570,7 @@
                       "Email_Subject_Clean": {
                         "runAfter": {},
                         "type": "Compose",
-                        "inputs": "@replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%00'), '_'), decodeUriComponent('%01'), '_'), decodeUriComponent('%02'), '_'), decodeUriComponent('%03'), '_'), decodeUriComponent('%04'), '_'), decodeUriComponent('%05'), '_'), decodeUriComponent('%06'), '_'), decodeUriComponent('%07'), '_'), decodeUriComponent('%08'), '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0B'), '_'), decodeUriComponent('%0C'), '_'), decodeUriComponent('%0D'), '_'), decodeUriComponent('%0E'), '_'), decodeUriComponent('%0F'), '_'), decodeUriComponent('%10'), '_'), decodeUriComponent('%11'), '_'), decodeUriComponent('%12'), '_'), decodeUriComponent('%13'), '_'), decodeUriComponent('%14'), '_'), decodeUriComponent('%15'), '_'), decodeUriComponent('%16'), '_'), decodeUriComponent('%17'), '_'), decodeUriComponent('%18'), '_'), decodeUriComponent('%19'), '_'), decodeUriComponent('%1A'), '_'), decodeUriComponent('%1B'), '_'), decodeUriComponent('%1C'), '_'), decodeUriComponent('%1D'), '_'), decodeUriComponent('%1E'), '_'), decodeUriComponent('%1F'), '_'), decodeUriComponent('%7F'), '_')"
+                        "inputs": "@replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Subject_For_Matching'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%00'), '_'), decodeUriComponent('%01'), '_'), decodeUriComponent('%02'), '_'), decodeUriComponent('%03'), '_'), decodeUriComponent('%04'), '_'), decodeUriComponent('%05'), '_'), decodeUriComponent('%06'), '_'), decodeUriComponent('%07'), '_'), decodeUriComponent('%08'), '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0B'), '_'), decodeUriComponent('%0C'), '_'), decodeUriComponent('%0D'), '_'), decodeUriComponent('%0E'), '_'), decodeUriComponent('%0F'), '_'), decodeUriComponent('%10'), '_'), decodeUriComponent('%11'), '_'), decodeUriComponent('%12'), '_'), decodeUriComponent('%13'), '_'), decodeUriComponent('%14'), '_'), decodeUriComponent('%15'), '_'), decodeUriComponent('%16'), '_'), decodeUriComponent('%17'), '_'), decodeUriComponent('%18'), '_'), decodeUriComponent('%19'), '_'), decodeUriComponent('%1A'), '_'), decodeUriComponent('%1B'), '_'), decodeUriComponent('%1C'), '_'), decodeUriComponent('%1D'), '_'), decodeUriComponent('%1E'), '_'), decodeUriComponent('%1F'), '_'), decodeUriComponent('%7F'), '_')"
                       },
                       "For_each_Attachment_1": {
                         "foreach": "@variables('arrAttachments')",
@@ -597,7 +597,7 @@
                               "method": "post",
                               "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                               "queries": {
-                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', '')}/",
                                 "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
                                 "queryParametersSingleEncoded": true
                               }
@@ -639,7 +639,7 @@
                       }
                     },
                     "runAfter": {
-                      "If_No_Matter_Use_Folder_Hint": [
+                      "If_Still_No_Matter_Use_Unsorted": [
                         "Succeeded"
                       ]
                     },
@@ -663,16 +663,8 @@
                         {
                           "not": {
                             "contains": [
-                              "@toUpper(coalesce(outputs('Get_Email_From'),''))",
-                              "CALENDAR"
-                            ]
-                          }
-                        },
-                        {
-                          "not": {
-                            "contains": [
-                              "@toUpper(coalesce(outputs('Get_Email_To'),''))",
-                              "CALENDAR"
+                              "@coalesce(body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['@odata.type'], '')",
+                              "eventMessage"
                             ]
                           }
                         }
@@ -733,6 +725,55 @@
                           "equals": [
                             "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], '')))",
                             "@false"
+                          ]
+                        }
+                      ]
+                    },
+                    "type": "If"
+                  },
+                  "If_Still_No_Matter_Use_Unsorted": {
+                    "actions": {
+                      "Set_variable_blnFoundItem_Unsorted": {
+                        "runAfter": {},
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "blnFoundItem",
+                          "value": "@true"
+                        }
+                      },
+                      "Set_variable_strFoundMatter_Unsorted": {
+                        "runAfter": {
+                          "Set_variable_blnFoundItem_Unsorted": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "strFoundMatter",
+                          "value": "UnsortedMatterCommunication"
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "If_No_Matter_Use_Folder_Hint": [
+                        "Succeeded"
+                      ]
+                    },
+                    "else": {
+                      "actions": {}
+                    },
+                    "expression": {
+                      "or": [
+                        {
+                          "equals": [
+                            "@variables('blnFoundItem')",
+                            "@false"
+                          ]
+                        },
+                        {
+                          "equals": [
+                            "@empty(trim(coalesce(variables('strFoundMatter'),'')))",
+                            "@true"
                           ]
                         }
                       ]
@@ -1070,9 +1111,8 @@
                   }
                 },
                 "runAfter": {
-                  "If_Has_Attachments": [
-                    "Succeeded",
-                    "Failed"
+                  "Subject_For_Matching": [
+                    "Succeeded"
                   ]
                 },
                 "else": {
@@ -1082,21 +1122,23 @@
                   "and": [
                     {
                       "equals": [
-                        "@empty(outputs('Get_Email_Subject'))",
+                        "@empty(trim(coalesce(outputs('Subject_For_Matching'),'')))",
                         "@false"
                       ]
-                    },
-                    {
-                      "not": {
-                        "equals": [
-                          "@outputs('Get_Email_Subject')",
-                          "@null"
-                        ]
-                      }
                     }
                   ]
                 },
                 "type": "If"
+              },
+              "Subject_For_Matching": {
+                "runAfter": {
+                  "If_Has_Attachments": [
+                    "Succeeded",
+                    "Failed"
+                  ]
+                },
+                "type": "Compose",
+                "inputs": "@if(empty(trim(coalesce(outputs('Get_Email_Subject'),''))), '(no subject)', outputs('Get_Email_Subject'))"
               }
             },
             "runAfter": {

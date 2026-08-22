@@ -107,56 +107,29 @@ public class RegExMattersAzFunc
 
 
 
-            /*For  the following reg expressions match on any of these:
-
-            \d\d.\d\d\d
-        \d\d\d.\d\d\d
-        \d\d.\d\d\d\d
-        1\d-\d\d\d\d\d\d\d
-        2\d-\d\d\d\d\d\d\d
-        2\d-\d\d\d\d\d\d\d\d\d
-        BEAZL\d\d\d\d\d\d\d\d\d\d\d\d
-        \d\d\d\d\d\d\d
-        \d\d\d\d\d\d\d\d\d\d
-        \d\d\d\d\d\d\d\d\d\d\d
-        \d\d-\d\d-\d\d\d\d\d\d
-        \d\d\d\d\d\d-001
-        \d\d.\d\d\d\d
-        95A.\d\d\d
-            */
-
-            var patterns = new List<string>
-{
-   @"\d\d.\d\d\d",
-@"\d\d\d.\d\d\d",
-@"\d\d.\d\d\d\d",
-@"1\d-\d\d\d\d\d\d\d",
-@"2\d-\d\d\d\d\d\d\d",
-@"2\d-\d\d\d\d\d\d\d\d\d",
-@"BEAZL\d\d\d\d\d\d\d\d\d\d\d\d",
-@"\d\d\d\d\d\d\d",
-@"\d\d\d\d\d\d\d\d\d\d",
-@"\d\d\d\d\d\d\d\d\d\d\d",
-@"\d\d-\d\d-\d\d\d\d\d\d",
-@"\d\d\d\d\d\d-001",
-@"\d\d.\d\d\d\d",
-@"95A.\d\d\d",
-};
-
-            foreach (string word in words)
-            {
-                foreach (string pattern in patterns)
-                {
-                    match = Regex.Match(word, pattern);
-                    if (match.Success)
-                    {
-                        // Returns on the very first match it finds
-                        return new OkObjectResult(new { match = "UnsortedMatterCommunication", type = "Unsorted" });
-                    }
-                }
-            }
-
-            return new OkObjectResult(new { match = "", type = "" });
+            // Nothing in the subject resolves to a matter.
+            //
+            // This used to be decided by a block of hand-written patterns - things like
+            // @"\d\d\d\d\d\d\d" (any seven consecutive digits, unanchored) and @"\d\d.\d\d\d"
+            // (the dot unescaped, so it matched "25X123" too). If one of them hit, the
+            // message was declared Unsorted; if none did, this returned empty.
+            //
+            // That made the loose patterns the ONLY thing routing unresolvable mail into the
+            // unsorted bucket, and an empty return means the workflow writes no blob at all -
+            // so a subject too plain to trip even those patterns ("RE: Data Breach Callers")
+            // was completed and archived nowhere. Measured at 0.7% of a 300-subject sample.
+            //
+            // The routing decision is now unconditional and does not depend on whether a
+            // court reference or invoice number happened to look like a matter number.
+            // Everything unresolvable lands in the unsorted bucket, where it is at least
+            // stored and searchable.
+            //
+            // "UnsortedMatterCommunication" is a real row in the Matters Lookup list (item
+            // 185), so the workflow resolves it like any other matter. It is deliberately NOT
+            // treated as a real match there: If_No_Matter_Use_Folder_Hint overrides this
+            // placeholder when the mailbox folder names a matter, which is how mail whose
+            // subject says nothing still reaches the right place.
+            return new OkObjectResult(new { match = "UnsortedMatterCommunication", type = "Unsorted" });
         }
         catch (JsonException)
         {
