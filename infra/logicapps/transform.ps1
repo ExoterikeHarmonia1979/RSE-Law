@@ -285,7 +285,25 @@ $found.actions = @{
           path = "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files"
           body = "@item()?['Content']"
           queries = @{
-            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/"
+            <#
+            One folder per MESSAGE, not one flat folder per matter.
+
+            Attachment blob names were the attachment name alone, so two different messages
+            in one matter that both attach Invoice.pdf or image001.png wrote to the same
+            path and the second silently replaced the first - the identical defect fixed for
+            .eml names, left open until now and recorded in the README.
+
+            A subfolder rather than a name suffix, so a downloaded file keeps its real name:
+            "Invoice.pdf", not "Invoice [Q4TAMd2rHPEk].pdf". The segment is the same
+            deterministic message-id tail the .eml uses, so an attachment sits beside its own
+            message and re-running the sweep overwrites its own blob rather than duplicating.
+
+            Nothing reads these by path: EmlPreviewFunc and EmlAttachmentNamesSkill both
+            parse attachments out of the .eml, the index gets attachment_names from that
+            skill, and refile-unsorted.ps1 excludes anything below the prefix either way.
+            Attachments already written stay flat; only new writes are nested.
+            #>
+            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{$idTail}/"
             name       = "@$attStem"
             queryParametersSingleEncoded = $true
           }

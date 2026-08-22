@@ -173,6 +173,19 @@ foreach($b in ($all.Keys | Where-Object { $all[$_].inputs.host.connection.name -
   Write-Host "  $b -> $($all[$b].inputs.queries.folderPath)"
   Write-Host "        name = $($all[$b].inputs.queries.name)"
 }
+# Every blob path must be unique per MESSAGE. Both writes lost mail by being unique only per
+# subject (.eml) or per attachment name (attachments), and in both cases the overwrite was
+# silent - the run still reported success. The message-id tail is what makes them distinct,
+# so assert it is present rather than trusting it stayed.
+Write-Host "`n[9b] per-message uniqueness in blob paths"
+$emlName = "$($all['Create_blob_1'].inputs.queries.name)"
+if($emlName -notmatch "outputs\('Email_Blob_Name'\)"){ Bad "Create_blob_1 no longer uses Email_Blob_Name" }
+elseif("$($all['Email_Blob_Name'].inputs)" -notmatch "Get_Message_ID"){ Bad "Email_Blob_Name does not include the message id - same-subject replies will overwrite" }
+else { Ok "Create_blob_1 name carries the message id" }
+$attPath = "$($all['Create_blob_for_Attachment'].inputs.queries.folderPath)"
+if($attPath -notmatch 'Get_Message_ID'){
+  Bad "attachment folderPath has no message id - two messages attaching the same filename will overwrite: $attPath"
+} else { Ok "attachment path is per-message" }
 
 Write-Host "`n================ $(if($fail -eq 0){'ALL CHECKS PASSED'}else{"$fail FAILURE(S)"}) ================"
 exit $fail

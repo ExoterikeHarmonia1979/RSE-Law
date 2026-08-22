@@ -145,11 +145,25 @@ Versioning cannot save you here: the storage account has hierarchical namespace 
 Azure blob versioning is unavailable (`FeatureNotSupportedForAccount`) and an overwrite
 leaves no trace at all. Uniqueness in the name is the only protection there is.
 
-**Attachments still collide, and this is not fixed.** `Create_blob_for_Attachment` names by
-attachment name alone, so two different emails in the same matter that both attach
-`Invoice.pdf` or `image001.png` overwrite each other. Same defect as above, same silence.
-It needs the same treatment — most likely a per-message subfolder rather than a suffix, so
-downloaded files keep their real names.
+**Attachments are one folder per message**, not one flat folder per matter:
+
+```
+/matters/<matter>/Emails/Attachments/<message-id tail>/<filename>
+```
+
+Until 2026-08-22 they were named by attachment name alone, so two different emails in one
+matter both attaching `Invoice.pdf` or `image001.png` overwrote each other — the same silent
+defect as the subject-only `.eml` names, and it lost real attachments the same way.
+
+A subfolder rather than a name suffix, deliberately: a downloaded file keeps its real name.
+The segment is the same deterministic message-id tail the `.eml` uses, so an attachment sits
+beside its own message and a re-run overwrites its own blob rather than duplicating.
+
+Nothing reads these by path — `EmlPreviewFunc` and `EmlAttachmentNamesSkill` parse
+attachments out of the `.eml`, the index takes `attachment_names` from that skill, and
+`refile-unsorted.ps1` excludes anything below the prefix either way. Attachments written
+before the change stay flat; only new writes nest. `validate.ps1` check `[9b]` asserts both
+blob paths still carry the message id.
 
 **`strFoundMatter` is the blob path.** If it is ever empty the archive writes to
 `/matters//Emails/` and still reports success. There is a guard on the condition; do not

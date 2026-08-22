@@ -560,7 +560,7 @@
                                 "method": "post",
                                 "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                                 "queries": {
-                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', '')}/",
                                   "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
                                   "queryParametersSingleEncoded": true
                                 }
