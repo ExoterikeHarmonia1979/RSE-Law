@@ -107,10 +107,10 @@ export class AzureSearchService {
   /** Full search — powers the message list. */
   public async search(queryText: string, options: ISearchOptions): Promise<ISearchPage> {
     const parsed = parseOutlookQuery(queryText);
-    const body: { [key: string]: unknown } = {
+    const build = (searchMode: 'all' | 'any'): { [key: string]: unknown } => ({
       search: parsed.search,
       queryType: 'full',
-      searchMode: 'all',
+      searchMode,
       count: true,
       top: options.top,
       skip: options.skip,
@@ -118,7 +118,8 @@ export class AzureSearchService {
       highlight: 'content,metadata_subject',
       highlightPreTag: HL_PRE,
       highlightPostTag: HL_POST
-    };
+    });
+    const body: { [key: string]: unknown } = build('all');
     // Hybrid only when there is text to embed AND relevance ordering to rank it.
     //
     // Two separate reasons, both measured against the live index:
@@ -153,11 +154,37 @@ export class AzureSearchService {
       body.orderby = 'sent_date desc';
     }
 
-    const json = await this._post(`/docs/search`, body);
+    let json = await this._post(`/docs/search`, body);
+    let count = typeof json['@odata.count'] === 'number' ? json['@odata.count'] : (json.value || []).length;
+
+    // searchMode 'all' means every word must appear in the SAME message, which is what
+    // Outlook does and is right for precision — but it dead-ends. Someone searching a
+    // remembered phrase gets nothing back and no hint that fewer words would work.
+    //
+    // Only on a genuinely empty result do we retry with 'any' and say so. Switching to
+    // 'any' outright was the other option and it is worse: 'all' and 'any' return the
+    // identical 51 hits for a bare matter number, so it would not have helped the case
+    // this was reported for, while making every ordinary multi-word search noisier.
+    let broadened = false;
+    if (count === 0 && parsed.search !== '*') {
+      const retry = build('any');
+      if (body.vectorQueries) { retry.vectorQueries = body.vectorQueries; }
+      if (body.filter) { retry.filter = body.filter; }
+      if (body.orderby) { retry.orderby = body.orderby; }
+      const wider = await this._post(`/docs/search`, retry);
+      const widerCount = typeof wider['@odata.count'] === 'number' ? wider['@odata.count'] : (wider.value || []).length;
+      if (widerCount > 0) {
+        json = wider;
+        count = widerCount;
+        broadened = true;
+      }
+    }
+
     const values: unknown[] = json.value || [];
     return {
       items: values.map(toEmailItem),
-      totalCount: typeof json['@odata.count'] === 'number' ? json['@odata.count'] : values.length
+      totalCount: count,
+      broadened
     };
   }
 

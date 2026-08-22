@@ -100,17 +100,133 @@ $found.expression = @{
   )
 }
 
+<#
+Fall back to the matter the mailbox itself already states.
+
+matters@rse-law.com files mail into a File Cabinet tree - File Cabinet/119/119.014 - which
+is a matter classification a person already made, on 119,573 messages. The pipeline ignored
+it and re-derived the matter from the subject line, which is why so much lands unsorted:
+for matter 119.014, 52 of 272 messages mention it only in the body or an attachment, and
+NONE of the twelve sitting in Inbox carry it in the subject at all.
+
+sweep-inbox.ps1 puts the folder's matter number in the synthetic notification as
+Data.MatterHint. This reads it back and uses it ONLY when subject resolution has already
+failed, so nothing about existing behaviour changes: real Graph notifications carry no hint
+and take exactly the path they did before.
+
+Read from the decoded body rather than body('Parse_JSON'), because the hint is not in that
+action's schema and relying on an unschema'd property surviving Parse_JSON would fail
+silently - the worst possible failure for a fallback.
+
+CASING IS LOAD-BEARING. The payload key is lowercase 'data'. Property access on a raw
+json() result is CASE-SENSITIVE, unlike body('Parse_JSON'), where the schema normalises it -
+which is why the surrounding code gets away with ?['Data'] and this cannot. The first
+version of this read ?['Data'] and therefore returned null on every single message: the
+fallback never once fired, and 64 messages out of File Cabinet/99/99.103 - whose subjects
+say "RSE99.103", with no space, so subject matching cannot resolve them - went to
+UnsortedMatterCommunication exactly as they had before. Both casings are accepted below so
+that a future change to the emitter cannot silently disarm this again.
+
+
+The hint's shape is validated in the sweep, where a real regex is available; Logic Apps has
+none. The write gate below still refuses an empty matter, so the blast radius of a bad hint
+is a wrongly-named folder, not a write to /matters//Emails/.
+#>
+# Declare the hint in Parse_JSON's schema so body('Parse_JSON') is a genuine second source
+# rather than a hope. Three sources, because this fallback failing silently is exactly the
+# bug that already cost a full re-sweep: lowercase raw (what the sweep emits), uppercase raw,
+# then the schema-backed parse.
+$pjProps = $root.Parse_JSON.inputs.schema.properties
+foreach ($k in @('data','Data')) {
+  if ($pjProps.ContainsKey($k) -and $pjProps[$k].properties) {
+    $pjProps[$k].properties['MatterHint'] = @{ type = @('string','null') }
+  }
+}
+$hint = "trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], " +
+        "json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], " +
+        "body('Parse_JSON')?['Data']?['MatterHint'], ''))"
+$notEmpty.If_No_Matter_Use_Folder_Hint = @{
+  type = 'If'
+  runAfter = @{ If_Subject_has_Reg_Ex_Match = @('Succeeded') }
+  <#
+  "Not found" is not the only failure. The regex function does not return empty for a
+  subject it cannot resolve - it returns the literal string UnsortedMatterCommunication,
+  and the lookup list contains a row whose RSEFileNo is exactly that (item 185). So an
+  unresolvable subject resolves as a perfectly valid matter: blnFoundItem becomes true,
+  strFoundMatter becomes the placeholder, and the mail is filed under
+  /matters/UnsortedMatterCommunication/.
+
+  Gating the fallback on blnFoundItem alone therefore made it unreachable for exactly the
+  mail it was written for. Traced on a real run: subject
+  "RE: Trial Subpoena to Rick Marcus in the Gougerchian case; RSE99.103" -> regex match
+  "UnsortedMatterCommunication" -> found in list -> hint skipped -> filed unsorted, with a
+  perfectly good MatterHint of 99.103 sitting unused in the payload.
+
+  The placeholder must therefore count as "no matter yet". A real matter still wins: this
+  only overrides the placeholder, never a genuine match.
+  #>
+  expression = @{ and = @(
+    @{ or = @(
+      @{ equals = @('@variables(''blnFoundItem'')', '@false') }
+      @{ equals = @('@trim(coalesce(variables(''strFoundMatter''),''''))', 'UnsortedMatterCommunication') }
+    ) }
+    @{ equals = @("@empty($hint)", '@false') }
+  ) }
+  actions = @{
+    Set_variable_blnFoundItem_Folder = @{
+      type = 'SetVariable'; runAfter = @{}
+      inputs = @{ name = 'blnFoundItem'; value = '@true' }
+    }
+    Set_variable_strFoundMatter_Folder = @{
+      type = 'SetVariable'
+      runAfter = @{ Set_variable_blnFoundItem_Folder = @('Succeeded') }
+      inputs = @{ name = 'strFoundMatter'; value = "@$hint" }
+    }
+  }
+  else = @{ actions = @{} }
+}
+# the write gate now waits on the fallback rather than on subject resolution alone
+$found.runAfter = @{ If_No_Matter_Use_Folder_Hint = @('Succeeded') }
+
 # Collapse the two duplicate branches (site-exists / new-site) into one blob path.
 # Kept: the sanitised .eml write and the attachment loop. Dropped: their byte-identical twins.
 # cap the stem so a very long subject / attachment name cannot exceed the blob name limit,
 # which would otherwise make that email permanently unarchivable
 function Cap([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, 0, $n), $e)" }
+# last $n characters - the distinguishing end of a Graph message id
+function Tail([string]$e, [int]$n) { "if(greater(length($e), $n), substring($e, sub(length($e), $n), $n), $e)" }
 # Cap inlines its argument three times, so the 42-replace sanitising chain is composed
 # once into its own action and capped by reference. Inlining it would emit ~126 nested
 # replace() calls per name and make the definition unreadable for no benefit.
 # trim last: capping at 180 can itself leave trailing whitespace on the stem
-$emlStem = "trim(" + (Cap "outputs('Email_Subject_Clean')" 180) + ")"
+$emlStem = "trim(" + (Cap "outputs('Email_Subject_Clean')" 150) + ")"
 $attStem = "trim(" + (Cap "outputs('Attachment_Name_Clean')" 180) + ")"
+
+<#
+The blob name must be unique per MESSAGE, not per subject.
+
+Naming by subject alone meant every reply in a thread wrote to the same path and
+silently overwrote the one before it. Measured on matter 120.058: 53 stored files
+representing 16 actual conversations, and the surviving copies quote threads 30
+messages deep. That is why the search web part returned far fewer results than the
+matters mailbox - the mailbox has one entry per message, the archive had one per
+subject line.
+
+The suffix is the tail of the Graph message id, which is the part that varies between
+messages in a mailbox. Deterministic per message on purpose: the same message always
+lands on the same blob, so re-running the sweep or replaying the dead-letter queue
+still overwrites rather than duplicates - the property the recovery scripts rely on.
+
+Versioning cannot backstop this. The storage account has hierarchical namespace
+enabled, so Azure blob versioning is unavailable on it ("FeatureNotSupportedForAccount").
+Uniqueness in the name is the only protection there is.
+
+The subject cap drops 180 -> 150 so names stay about the length they were.
+#>
+# Case is preserved deliberately. The id is base64, where case carries information, and
+# blob names are case-sensitive - lowercasing it would throw away entropy for tidiness.
+# Only the three characters that are awkward in a name are swapped out.
+$idTail = "replace(replace(replace(" + (Tail "coalesce(outputs('Get_Message_ID'),'')" 24) + ", '/', '_'), '+', '-'), '=', '')"
 
 $found.actions = @{
   Email_Subject_Clean = @{
@@ -121,7 +237,7 @@ $found.actions = @{
   Email_Blob_Name = @{
     type = 'Compose'
     runAfter = @{ Email_Subject_Clean = @('Succeeded') }
-    inputs = "@concat($emlStem, '.eml')"
+    inputs = "@concat($emlStem, ' [', $idTail, '].eml')"
   }
   HTTP_Graph_API_Call_to_Get_Email_Message_Value = @{
     type = 'Http'

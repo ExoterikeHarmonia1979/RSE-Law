@@ -62,6 +62,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const [query, setQuery] = React.useState('');
   const [items, setItems] = React.useState<IEmailItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
+  const [broadened, setBroadened] = React.useState(false);
   const [listLoading, setListLoading] = React.useState(false);
   const [listError, setListError] = React.useState<string | undefined>(undefined);
   const [orderByDate, setOrderByDate] = React.useState(true);
@@ -126,6 +127,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
           return byDate ? sortByDateDesc(merged) : merged;
         });
         setTotalCount(page.totalCount);
+        setBroadened(page.broadened === true);
         setListLoading(false);
         if (!append) {
           setSelected(undefined);
@@ -207,6 +209,12 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       {listError && (
         <MessageBar messageBarType={MessageBarType.error} isMultiline={true}>
           {listError}
+        </MessageBar>
+      )}
+
+      {broadened && !listError && (
+        <MessageBar messageBarType={MessageBarType.info} isMultiline={false}>
+          No message contains every word you typed. Showing messages that match some of them.
         </MessageBar>
       )}
 

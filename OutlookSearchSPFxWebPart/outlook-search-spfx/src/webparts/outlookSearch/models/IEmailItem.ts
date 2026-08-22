@@ -23,6 +23,12 @@ export interface IEmailItem {
 export interface ISearchPage {
   items: IEmailItem[];
   totalCount: number;
+  /**
+   * True when an exact "every word must match" search found nothing and the
+   * service retried with "any word". The UI says so, because silently changing
+   * what was asked for is worse than returning nothing.
+   */
+  broadened?: boolean;
 }
 
 export interface IPreviewAttachment {

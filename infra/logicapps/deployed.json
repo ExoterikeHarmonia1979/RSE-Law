@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-09T07:58:11.0733655Z",
+  "capturedUtc": "2026-08-21T13:10:44.7915711Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -16,25 +16,25 @@
     "triggers": {
       "When_a_message_is_received_in_a_queue_(peek-lock)": {
         "recurrence": {
-          "interval": 1,
-          "frequency": "Minute"
+          "frequency": "Minute",
+          "interval": 1
         },
         "evaluatedRecurrence": {
-          "interval": 1,
-          "frequency": "Minute"
+          "frequency": "Minute",
+          "interval": 1
         },
         "type": "ApiConnection",
         "inputs": {
-          "queries": {
-            "queueType": "Main"
-          },
-          "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/head/peek",
           "host": {
             "connection": {
               "name": "@parameters('$connections')['servicebus']['connectionId']"
             }
           },
-          "method": "get"
+          "method": "get",
+          "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/head/peek",
+          "queries": {
+            "queueType": "Main"
+          }
         },
         "runtimeConfiguration": {
           "concurrency": {
@@ -44,20 +44,150 @@
       }
     },
     "actions": {
-      "Process_Message": {
+      "Complete_the_message_in_a_queue": {
+        "runAfter": {
+          "Process_Message": [
+            "Succeeded"
+          ]
+        },
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['servicebus']['connectionId']"
+            }
+          },
+          "method": "delete",
+          "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete",
+          "queries": {
+            "lockToken": "@triggerBody()?['LockToken']",
+            "queueType": "Main"
+          }
+        }
+      },
+      "If_Message_No_Longer_Exists": {
         "actions": {
-          "Get_OData_ID": {
+          "Complete_Stale_Notification": {
+            "runAfter": {},
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['servicebus']['connectionId']"
+                }
+              },
+              "method": "delete",
+              "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete",
+              "queries": {
+                "lockToken": "@triggerBody()?['LockToken']",
+                "queueType": "Main"
+              }
+            }
+          },
+          "Terminate_Stale_Handled": {
             "runAfter": {
-              "Get_Message_ID": [
+              "Complete_Stale_Notification": [
                 "Succeeded"
               ]
             },
-            "metadata": {
-              "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+            "type": "Terminate",
+            "inputs": {
+              "runStatus": "Succeeded"
+            }
+          }
+        },
+        "runAfter": {
+          "Process_Message": [
+            "Failed",
+            "TimedOut"
+          ]
+        },
+        "else": {
+          "actions": {
+            "Abandon_the_message_in_a_queue": {
+              "runAfter": {},
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['servicebus']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/abandon",
+                "queries": {
+                  "lockToken": "@triggerBody()?['LockToken']",
+                  "queueType": "Main"
+                }
+              }
             },
-            "type": "Compose",
-            "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']"
-          },
+            "Terminate_Failed": {
+              "runAfter": {
+                "Abandon_the_message_in_a_queue": [
+                  "Succeeded",
+                  "Failed",
+                  "TimedOut"
+                ]
+              },
+              "type": "Terminate",
+              "inputs": {
+                "runError": {
+                  "code": "ProcessingFailed",
+                  "message": "Message processing failed; message abandoned for redelivery."
+                },
+                "runStatus": "Failed"
+              }
+            }
+          }
+        },
+        "expression": {
+          "and": [
+            {
+              "equals": [
+                "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
+                404
+              ]
+            }
+          ]
+        },
+        "type": "If"
+      },
+      "Initialize_variables": {
+        "runAfter": {},
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "strRecipients",
+              "type": "string"
+            },
+            {
+              "name": "blnFoundItem",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "name": "strFoundMatter",
+              "type": "string"
+            },
+            {
+              "name": "arrAttachments",
+              "type": "array"
+            },
+            {
+              "name": "blnKeepProcessing",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "name": "strCC",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "Process_Message": {
+        "actions": {
           "Get_Message_ID": {
             "runAfter": {
               "Parse_JSON": [
@@ -70,138 +200,22 @@
             "type": "Compose",
             "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['Id']"
           },
-          "Parse_JSON": {
-            "runAfter": {
-              "Get_Message_JSON": [
-                "Succeeded"
-              ]
-            },
-            "type": "ParseJson",
-            "inputs": {
-              "content": "@outputs('Get_Message_JSON')",
-              "schema": {
-                "properties": {
-                  "data": {
-                    "properties": {
-                      "ChangeType": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "Resource": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "ResourceData": {
-                        "properties": {
-                          "@@odata.etag": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "@@odata.id": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "@@odata.type": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "Id": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "SubscriptionExpirationDateTime": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "SubscriptionId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "clientState": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "tenantId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "datacontenttype": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "source": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "specversion": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "subject": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "time": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "type": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "type": "object"
-              }
-            }
-          },
           "Get_Message_JSON": {
             "runAfter": {},
             "type": "Compose",
             "inputs": "@decodeBase64(triggerBody()?['ContentData'])"
+          },
+          "Get_OData_ID": {
+            "runAfter": {
+              "Get_Message_ID": [
+                "Succeeded"
+              ]
+            },
+            "metadata": {
+              "operationMetadataId": "08a8bf4b-df6f-4593-9b27-d23c7d20bd9f"
+            },
+            "type": "Compose",
+            "inputs": "@body('Parse_JSON')?['Data']?['ResourceData']?['@odata.id']"
           },
           "If_Odata_ID_is_valid": {
             "actions": {
@@ -317,12 +331,12 @@
                 },
                 "type": "Http",
                 "inputs": {
-                  "method": "GET",
-                  "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}",
                   "authentication": {
                     "audience": "https://graph.microsoft.com",
                     "type": "ManagedServiceIdentity"
-                  }
+                  },
+                  "method": "GET",
+                  "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}"
                 },
                 "runtimeConfiguration": {
                   "contentTransfer": {
@@ -356,12 +370,12 @@
                         },
                         "type": "Http",
                         "inputs": {
-                          "method": "GET",
-                          "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments/@{item()?['id']}/$value",
                           "authentication": {
                             "audience": "https://graph.microsoft.com",
                             "type": "ManagedServiceIdentity"
-                          }
+                          },
+                          "method": "GET",
+                          "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments/@{item()?['id']}/$value"
                         },
                         "runtimeConfiguration": {
                           "contentTransfer": {
@@ -447,12 +461,12 @@
                     },
                     "type": "Http",
                     "inputs": {
-                      "method": "GET",
-                      "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments",
                       "authentication": {
                         "audience": "https://graph.microsoft.com",
                         "type": "ManagedServiceIdentity"
-                      }
+                      },
+                      "method": "GET",
+                      "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/attachments"
                     },
                     "runtimeConfiguration": {
                       "contentTransfer": {
@@ -492,6 +506,15 @@
                     "type": "Compose",
                     "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['match']"
                   },
+                  "Get_Reg_Ex_Match_Type": {
+                    "runAfter": {
+                      "Get_Reg_Ex_Match_All_Subject": [
+                        "Succeeded"
+                      ]
+                    },
+                    "type": "Compose",
+                    "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
+                  },
                   "HTTP_Az_Func_Reg_Matter_Full_Subject_": {
                     "type": "Http",
                     "inputs": {
@@ -520,20 +543,34 @@
                         },
                         "type": "ApiConnection",
                         "inputs": {
-                          "queries": {
-                            "name": "@outputs('Email_Blob_Name')",
-                            "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/",
-                            "queryParametersSingleEncoded": true
-                          },
-                          "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                           "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
                           "host": {
                             "connection": {
                               "name": "@parameters('$connections')['azureblob-1']['connectionId']"
                             }
                           },
-                          "method": "post"
+                          "method": "post",
+                          "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                          "queries": {
+                            "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/",
+                            "name": "@outputs('Email_Blob_Name')",
+                            "queryParametersSingleEncoded": true
+                          }
                         }
+                      },
+                      "Email_Blob_Name": {
+                        "runAfter": {
+                          "Email_Subject_Clean": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', ''), '].eml')"
+                      },
+                      "Email_Subject_Clean": {
+                        "runAfter": {},
+                        "type": "Compose",
+                        "inputs": "@replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%00'), '_'), decodeUriComponent('%01'), '_'), decodeUriComponent('%02'), '_'), decodeUriComponent('%03'), '_'), decodeUriComponent('%04'), '_'), decodeUriComponent('%05'), '_'), decodeUriComponent('%06'), '_'), decodeUriComponent('%07'), '_'), decodeUriComponent('%08'), '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0B'), '_'), decodeUriComponent('%0C'), '_'), decodeUriComponent('%0D'), '_'), decodeUriComponent('%0E'), '_'), decodeUriComponent('%0F'), '_'), decodeUriComponent('%10'), '_'), decodeUriComponent('%11'), '_'), decodeUriComponent('%12'), '_'), decodeUriComponent('%13'), '_'), decodeUriComponent('%14'), '_'), decodeUriComponent('%15'), '_'), decodeUriComponent('%16'), '_'), decodeUriComponent('%17'), '_'), decodeUriComponent('%18'), '_'), decodeUriComponent('%19'), '_'), decodeUriComponent('%1A'), '_'), decodeUriComponent('%1B'), '_'), decodeUriComponent('%1C'), '_'), decodeUriComponent('%1D'), '_'), decodeUriComponent('%1E'), '_'), decodeUriComponent('%1F'), '_'), decodeUriComponent('%7F'), '_')"
                       },
                       "For_each_Attachment_1": {
                         "foreach": "@variables('arrAttachments')",
@@ -551,19 +588,19 @@
                             },
                             "type": "ApiConnection",
                             "inputs": {
-                              "queries": {
-                                "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
-                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
-                                "queryParametersSingleEncoded": true
-                              },
-                              "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                               "body": "@item()?['Content']",
                               "host": {
                                 "connection": {
                                   "name": "@parameters('$connections')['azureblob-1']['connectionId']"
                                 }
                               },
-                              "method": "post"
+                              "method": "post",
+                              "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
+                              "queries": {
+                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/",
+                                "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
+                                "queryParametersSingleEncoded": true
+                              }
                             }
                           }
                         },
@@ -587,36 +624,22 @@
                         },
                         "type": "Http",
                         "inputs": {
-                          "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value",
                           "authentication": {
                             "audience": "https://graph.microsoft.com",
                             "type": "ManagedServiceIdentity"
                           },
-                          "method": "GET"
+                          "method": "GET",
+                          "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
                         },
                         "runtimeConfiguration": {
                           "contentTransfer": {
                             "transferMode": "Chunked"
                           }
                         }
-                      },
-                      "Email_Subject_Clean": {
-                        "runAfter": {},
-                        "type": "Compose",
-                        "inputs": "@replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(outputs('Get_Email_Subject'), '\\', '_'), '/', '_'), ':', '_'), '*', '_'), '?', '_'), '\"', '_'), '<', '_'), '>', '_'), '|', '_'), decodeUriComponent('%00'), '_'), decodeUriComponent('%01'), '_'), decodeUriComponent('%02'), '_'), decodeUriComponent('%03'), '_'), decodeUriComponent('%04'), '_'), decodeUriComponent('%05'), '_'), decodeUriComponent('%06'), '_'), decodeUriComponent('%07'), '_'), decodeUriComponent('%08'), '_'), decodeUriComponent('%09'), '_'), decodeUriComponent('%0A'), '_'), decodeUriComponent('%0B'), '_'), decodeUriComponent('%0C'), '_'), decodeUriComponent('%0D'), '_'), decodeUriComponent('%0E'), '_'), decodeUriComponent('%0F'), '_'), decodeUriComponent('%10'), '_'), decodeUriComponent('%11'), '_'), decodeUriComponent('%12'), '_'), decodeUriComponent('%13'), '_'), decodeUriComponent('%14'), '_'), decodeUriComponent('%15'), '_'), decodeUriComponent('%16'), '_'), decodeUriComponent('%17'), '_'), decodeUriComponent('%18'), '_'), decodeUriComponent('%19'), '_'), decodeUriComponent('%1A'), '_'), decodeUriComponent('%1B'), '_'), decodeUriComponent('%1C'), '_'), decodeUriComponent('%1D'), '_'), decodeUriComponent('%1E'), '_'), decodeUriComponent('%1F'), '_'), decodeUriComponent('%7F'), '_')"
-                      },
-                      "Email_Blob_Name": {
-                        "runAfter": {
-                          "Email_Subject_Clean": [
-                            "Succeeded"
-                          ]
-                        },
-                        "type": "Compose",
-                        "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 180), substring(outputs('Email_Subject_Clean'), 0, 180), outputs('Email_Subject_Clean'))), '.eml')"
                       }
                     },
                     "runAfter": {
-                      "If_Subject_has_Reg_Ex_Match": [
+                      "If_No_Matter_Use_Folder_Hint": [
                         "Succeeded"
                       ]
                     },
@@ -652,6 +675,65 @@
                               "CALENDAR"
                             ]
                           }
+                        }
+                      ]
+                    },
+                    "type": "If"
+                  },
+                  "If_No_Matter_Use_Folder_Hint": {
+                    "actions": {
+                      "Set_variable_blnFoundItem_Folder": {
+                        "runAfter": {},
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "blnFoundItem",
+                          "value": "@true"
+                        }
+                      },
+                      "Set_variable_strFoundMatter_Folder": {
+                        "runAfter": {
+                          "Set_variable_blnFoundItem_Folder": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "strFoundMatter",
+                          "value": "@trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], ''))"
+                        }
+                      }
+                    },
+                    "runAfter": {
+                      "If_Subject_has_Reg_Ex_Match": [
+                        "Succeeded"
+                      ]
+                    },
+                    "else": {
+                      "actions": {}
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "or": [
+                            {
+                              "equals": [
+                                "@variables('blnFoundItem')",
+                                "@false"
+                              ]
+                            },
+                            {
+                              "equals": [
+                                "@trim(coalesce(variables('strFoundMatter'),''))",
+                                "UnsortedMatterCommunication"
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "equals": [
+                            "@empty(trim(coalesce(json(outputs('Get_Message_JSON'))?['data']?['MatterHint'], json(outputs('Get_Message_JSON'))?['Data']?['MatterHint'], body('Parse_JSON')?['Data']?['MatterHint'], '')))",
+                            "@false"
+                          ]
                         }
                       ]
                     },
@@ -772,47 +854,64 @@
                     },
                     "else": {
                       "actions": {
-                        "Split_Subject_into_array": {
-                          "type": "Compose",
-                          "inputs": "@split(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(\noutputs('Get_Email_Subject')  ,\n  '!', ' '), '\"', ' '), '#', ' '), '$', ' '), '%', ' '), '&', ' '), '''', ' '), '(', ' '), ')', ' '), '*', ' '), '+', ' '), ',', ' '), '/', ' '), ':', ' '), ';', ' '), '<', ' '), '=', ' '), '>', ' '), '?', ' '), '@', ' '), '[', ' '), '\\', ' '), ']', ' '), '^', ' '), '_', ' '), '`', ' '), '{', ' '), '|', ' '), '}', ' '), '~', ' '),\n  '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),' ')"
-                        },
-                        "Set_variable_blnKeepProcessing": {
+                        "Build_Lookup_Clauses": {
                           "runAfter": {
-                            "Build_Lookup_Clauses": [
+                            "Candidate_Subject_Words": [
                               "Succeeded"
                             ]
                           },
-                          "type": "SetVariable",
+                          "type": "Select",
                           "inputs": {
-                            "name": "blnKeepProcessing",
-                            "value": "@true"
+                            "from": "@outputs('Candidate_Subject_Words')",
+                            "select": "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')"
+                          }
+                        },
+                        "Candidate_Subject_Words": {
+                          "runAfter": {
+                            "Filter_Subject_Words": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "Compose",
+                          "inputs": "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)"
+                        },
+                        "Filter_Subject_Words": {
+                          "runAfter": {
+                            "Split_Subject_into_array": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@outputs('Split_Subject_into_array')",
+                            "where": "@greater(length(string(item())), 2)"
                           }
                         },
                         "If_Any_Candidate_Words": {
                           "actions": {
-                            "Get_items_In_LookUp_List_By_Subject_Word": {
-                              "runAfter": {},
-                              "type": "ApiConnection",
-                              "inputs": {
-                                "queries": {
-                                  "$filter": "@join(body('Build_Lookup_Clauses'), ' or ')"
-                                },
-                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
-                                "host": {
-                                  "connection": {
-                                    "name": "@parameters('$connections')['sharepointonline']['connectionId']"
-                                  }
-                                },
-                                "method": "get"
-                              }
-                            },
                             "For_each_Subject_Word": {
                               "foreach": "@outputs('Candidate_Subject_Words')",
                               "actions": {
                                 "If_blnKeepProcessing": {
                                   "actions": {
+                                    "Filter_Rows_Matching_Word": {
+                                      "runAfter": {},
+                                      "type": "Query",
+                                      "inputs": {
+                                        "from": "@body('Get_items_In_LookUp_List_By_Subject_Word')?['value']",
+                                        "where": "@or(or(equals(item()?['RSEFileNo'], items('For_each_Subject_Word')), equals(item()?['CaseNo'], items('For_each_Subject_Word'))), equals(item()?['ClaimNo'], items('For_each_Subject_Word')))"
+                                      }
+                                    },
                                     "If_Item_Found_In_List_and_blnKeepProcessing": {
                                       "actions": {
+                                        "Set_variable_blnFoundItem_1": {
+                                          "runAfter": {},
+                                          "type": "SetVariable",
+                                          "inputs": {
+                                            "name": "blnFoundItem",
+                                            "value": "@true"
+                                          }
+                                        },
                                         "Set_variable_blnKeepProcessing_False": {
                                           "runAfter": {
                                             "Set_variable_strFoundMatter_1": [
@@ -835,14 +934,6 @@
                                           "inputs": {
                                             "name": "strFoundMatter",
                                             "value": "@first(body('Filter_Rows_Matching_Word'))?['RSEFileNo']"
-                                          }
-                                        },
-                                        "Set_variable_blnFoundItem_1": {
-                                          "runAfter": {},
-                                          "type": "SetVariable",
-                                          "inputs": {
-                                            "name": "blnFoundItem",
-                                            "value": "@true"
                                           }
                                         }
                                       },
@@ -867,14 +958,6 @@
                                         ]
                                       },
                                       "type": "If"
-                                    },
-                                    "Filter_Rows_Matching_Word": {
-                                      "runAfter": {},
-                                      "type": "Query",
-                                      "inputs": {
-                                        "where": "@or(or(equals(item()?['RSEFileNo'], items('For_each_Subject_Word')), equals(item()?['CaseNo'], items('For_each_Subject_Word'))), equals(item()?['ClaimNo'], items('For_each_Subject_Word')))",
-                                        "from": "@body('Get_items_In_LookUp_List_By_Subject_Word')?['value']"
-                                      }
                                     }
                                   },
                                   "runAfter": {},
@@ -905,6 +988,22 @@
                                   "repetitions": 1
                                 }
                               }
+                            },
+                            "Get_items_In_LookUp_List_By_Subject_Word": {
+                              "runAfter": {},
+                              "type": "ApiConnection",
+                              "inputs": {
+                                "host": {
+                                  "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                  }
+                                },
+                                "method": "get",
+                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://reiszsidermaneisenberg.sharepoint.com/sites/MatterExchange-POC'))}/tables/@{encodeURIComponent(encodeURIComponent('940d4826-7cf4-4bf1-979e-f6d28f4ba1c9'))}/items",
+                                "queries": {
+                                  "$filter": "@join(body('Build_Lookup_Clauses'), ' or ')"
+                                }
+                              }
                             }
                           },
                           "runAfter": {
@@ -929,38 +1028,21 @@
                           },
                           "type": "If"
                         },
-                        "Build_Lookup_Clauses": {
+                        "Set_variable_blnKeepProcessing": {
                           "runAfter": {
-                            "Candidate_Subject_Words": [
+                            "Build_Lookup_Clauses": [
                               "Succeeded"
                             ]
                           },
-                          "type": "Select",
+                          "type": "SetVariable",
                           "inputs": {
-                            "select": "@concat('RSEFileNo eq ''', item(), ''' or CaseNo eq ''', item(), ''' or ClaimNo eq ''', item(), '''')",
-                            "from": "@outputs('Candidate_Subject_Words')"
+                            "name": "blnKeepProcessing",
+                            "value": "@true"
                           }
                         },
-                        "Candidate_Subject_Words": {
-                          "runAfter": {
-                            "Filter_Subject_Words": [
-                              "Succeeded"
-                            ]
-                          },
+                        "Split_Subject_into_array": {
                           "type": "Compose",
-                          "inputs": "@take(union(body('Filter_Subject_Words'), body('Filter_Subject_Words')), 20)"
-                        },
-                        "Filter_Subject_Words": {
-                          "runAfter": {
-                            "Split_Subject_into_array": [
-                              "Succeeded"
-                            ]
-                          },
-                          "type": "Query",
-                          "inputs": {
-                            "where": "@greater(length(string(item())), 2)",
-                            "from": "@outputs('Split_Subject_into_array')"
-                          }
+                          "inputs": "@split(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(\noutputs('Get_Email_Subject')  ,\n  '!', ' '), '\"', ' '), '#', ' '), '$', ' '), '%', ' '), '&', ' '), '''', ' '), '(', ' '), ')', ' '), '*', ' '), '+', ' '), ',', ' '), '/', ' '), ':', ' '), ';', ' '), '<', ' '), '=', ' '), '>', ' '), '?', ' '), '@', ' '), '[', ' '), '\\', ' '), ']', ' '), '^', ' '), '_', ' '), '`', ' '), '{', ' '), '|', ' '), '}', ' '), '~', ' '),\n  '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),' ')"
                         }
                       }
                     },
@@ -985,15 +1067,6 @@
                       ]
                     },
                     "type": "If"
-                  },
-                  "Get_Reg_Ex_Match_Type": {
-                    "runAfter": {
-                      "Get_Reg_Ex_Match_All_Subject": [
-                        "Succeeded"
-                      ]
-                    },
-                    "type": "Compose",
-                    "inputs": "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
                   }
                 },
                 "runAfter": {
@@ -1055,6 +1128,140 @@
               ]
             },
             "type": "If"
+          },
+          "Parse_JSON": {
+            "runAfter": {
+              "Get_Message_JSON": [
+                "Succeeded"
+              ]
+            },
+            "type": "ParseJson",
+            "inputs": {
+              "content": "@outputs('Get_Message_JSON')",
+              "schema": {
+                "properties": {
+                  "data": {
+                    "properties": {
+                      "ChangeType": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "clientState": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "MatterHint": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "Resource": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "ResourceData": {
+                        "properties": {
+                          "@@odata.etag": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "@@odata.id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "@@odata.type": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "Id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "SubscriptionExpirationDateTime": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "SubscriptionId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "datacontenttype": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "source": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "specversion": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "subject": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "time": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
           }
         },
         "runAfter": {
@@ -1063,148 +1270,6 @@
           ]
         },
         "type": "Scope"
-      },
-      "If_Message_No_Longer_Exists": {
-        "actions": {
-          "Complete_Stale_Notification": {
-            "runAfter": {},
-            "type": "ApiConnection",
-            "inputs": {
-              "queries": {
-                "lockToken": "@triggerBody()?['LockToken']",
-                "queueType": "Main"
-              },
-              "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete",
-              "host": {
-                "connection": {
-                  "name": "@parameters('$connections')['servicebus']['connectionId']"
-                }
-              },
-              "method": "delete"
-            }
-          },
-          "Terminate_Stale_Handled": {
-            "runAfter": {
-              "Complete_Stale_Notification": [
-                "Succeeded"
-              ]
-            },
-            "type": "Terminate",
-            "inputs": {
-              "runStatus": "Succeeded"
-            }
-          }
-        },
-        "runAfter": {
-          "Process_Message": [
-            "Failed",
-            "TimedOut"
-          ]
-        },
-        "else": {
-          "actions": {
-            "Abandon_the_message_in_a_queue": {
-              "runAfter": {},
-              "type": "ApiConnection",
-              "inputs": {
-                "queries": {
-                  "lockToken": "@triggerBody()?['LockToken']",
-                  "queueType": "Main"
-                },
-                "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/abandon",
-                "host": {
-                  "connection": {
-                    "name": "@parameters('$connections')['servicebus']['connectionId']"
-                  }
-                },
-                "method": "post"
-              }
-            },
-            "Terminate_Failed": {
-              "runAfter": {
-                "Abandon_the_message_in_a_queue": [
-                  "Succeeded",
-                  "Failed",
-                  "TimedOut"
-                ]
-              },
-              "type": "Terminate",
-              "inputs": {
-                "runError": {
-                  "code": "ProcessingFailed",
-                  "message": "Message processing failed; message abandoned for redelivery."
-                },
-                "runStatus": "Failed"
-              }
-            }
-          }
-        },
-        "expression": {
-          "and": [
-            {
-              "equals": [
-                "@outputs('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['statusCode']",
-                404
-              ]
-            }
-          ]
-        },
-        "type": "If"
-      },
-      "Initialize_variables": {
-        "runAfter": {},
-        "type": "InitializeVariable",
-        "inputs": {
-          "variables": [
-            {
-              "name": "strRecipients",
-              "type": "string"
-            },
-            {
-              "name": "blnFoundItem",
-              "type": "boolean",
-              "value": false
-            },
-            {
-              "name": "strFoundMatter",
-              "type": "string"
-            },
-            {
-              "name": "arrAttachments",
-              "type": "array"
-            },
-            {
-              "name": "blnKeepProcessing",
-              "type": "boolean",
-              "value": true
-            },
-            {
-              "name": "strCC",
-              "type": "string"
-            }
-          ]
-        }
-      },
-      "Complete_the_message_in_a_queue": {
-        "runAfter": {
-          "Process_Message": [
-            "Succeeded"
-          ]
-        },
-        "type": "ApiConnection",
-        "inputs": {
-          "queries": {
-            "lockToken": "@triggerBody()?['LockToken']",
-            "queueType": "Main"
-          },
-          "path": "/@{encodeURIComponent(encodeURIComponent('speventgridqueue'))}/messages/complete",
-          "host": {
-            "connection": {
-              "name": "@parameters('$connections')['servicebus']['connectionId']"
-            }
-          },
-          "method": "delete"
-        }
       }
     },
     "outputs": {}

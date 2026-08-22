@@ -26,6 +26,17 @@ and JSON-schema required list in the definition.
 #>
 function Test-JsonScalar($o) {
   if ($null -eq $o) { return $true }
+  # Collections are never scalars, and this test must come BEFORE the .psobject access
+  # below. PowerShell enumerates member access over a collection, so on a one-element
+  # array `$o.psobject.BaseObject` returns the ELEMENT's BaseObject - a string - and the
+  # array tests as scalar. Sort-JsonKeys then returns it through the scalar path, where
+  # a single-element array is unwrapped to its item, and every
+  #   "runAfter": { "X": ["Succeeded"] }
+  # was emitted as { "X": "Succeeded" }, which ARM rejects:
+  #   Error converting value "Succeeded" to type FlowStatus[]
+  # Only single-element arrays were affected; two-element ones round-tripped fine, which
+  # is why this survived in after.json unnoticed.
+  if ($o -is [System.Collections.IEnumerable] -and $o -isnot [string]) { return $false }
   $base = if ($o -is [psobject]) { $o.psobject.BaseObject } else { $o }
   return ($base -is [string]) -or ($base -is [valuetype])
 }
@@ -41,7 +52,12 @@ function Get-DriftCanon($o) {
     return $out
   }
   if ($o -is [System.Collections.IEnumerable]) {
-    $acc = @(); foreach ($item in $o) { $acc += ,(Get-DriftCanon $item) }; return $acc
+    # ,$acc - PowerShell unwraps a SINGLE-element array on return, so a one-item list
+    # comes back as the bare item. Here that silently turned ["Succeeded"] into
+    # "Succeeded", which made a runAfter array compare equal to a scalar and hid real
+    # drift. The comma operator returns the array itself. See Sort-JsonKeys for the
+    # same fix on the emit side, where it produced an undeployable after.json.
+    $acc = @(); foreach ($item in $o) { $acc += ,(Get-DriftCanon $item) }; return ,$acc
   }
   if ($o -is [pscustomobject]) {
     $out = [ordered]@{}
@@ -106,7 +122,14 @@ function Sort-JsonKeys($o) {
     return $out
   }
   if ($o -is [System.Collections.IEnumerable]) {
-    $acc = @(); foreach ($item in $o) { $acc += ,(Sort-JsonKeys $item) }; return $acc
+    # ,$acc - without the comma a one-element array is unwrapped to its item on return,
+    # so every "runAfter": { "X": ["Succeeded"] } was emitted as { "X": "Succeeded" }.
+    # ARM rejects that outright:
+    #   Error converting value "Succeeded" to type FlowStatus[]
+    # after.json has carried this since key-sorted emit was introduced, which made the
+    # generated definition undeployable while the committed baseline - written from
+    # ARM's read-back rather than from this file - stayed correct and hid it.
+    $acc = @(); foreach ($item in $o) { $acc += ,(Sort-JsonKeys $item) }; return ,$acc
   }
   if ($o -is [pscustomobject]) {
     $out = [ordered]@{}

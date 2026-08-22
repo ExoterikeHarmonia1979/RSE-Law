@@ -29,7 +29,13 @@ The definition is source of truth here, not the portal. 57 actions with a hand-w
 ```
 
 `validate.ps1` is not decoration. It catches the mistakes that are invisible in the designer
-and only surface in production:
+and only surface in production. One of them it now catches was live in this repo for weeks:
+`after.json` was emitting `"runAfter": { "X": "Succeeded" }` instead of `["Succeeded"]`,
+which ARM rejects outright, so the generated definition could not be deployed at all. The
+cause was in `Test-JsonScalar` — PowerShell enumerates member access over a collection, so
+on a one-element array `$o.psobject.BaseObject` returns the *element's* BaseObject, the
+array tested as a scalar, and the scalar return path unwrapped it. Only single-element
+arrays were affected, which is why it went unnoticed. Checks:
 
 - a `runAfter` naming a deleted action, or an expression referencing one
 - `filter(...)` / `select(...)` used as expressions — **these are actions in Logic Apps**
@@ -86,6 +92,25 @@ peek-lock trigger (concurrency 100)
 
 ## Things that will bite you
 
+**The mailbox is not the Inbox.** `matters@rse-law.com` holds ~198,000 messages across ~880
+non-empty folders, and only ~78,000 of them are in the Inbox. The rest sit in a `File
+Cabinet/<series>/<matter>` tree that staff file into by hand. Until 2026-08-20 the sweep
+walked `Inbox` only, non-recursively, so **60% of the mailbox had never been archived at
+all** — which is why users found far more in Outlook than in the search web part, and it is
+a much larger effect than the thread collapse described above.
+
+Measured on matter 119.014 when this was found: 272 messages mentioned it, 205 of them in
+`File Cabinet/119/119.014`, only 12 in the Inbox, and **none of those 12 carried the matter
+number in the subject** — so the sweep had filed nothing. The archive held 16 emails and the
+search returned 19 hits, against 271 in Outlook.
+
+**That folder tree is a matter classification somebody already made**, on ~119,600 messages,
+and the pipeline used to ignore it. `sweep-inbox.ps1 -AllFolders` now passes the folder's
+matter number as `Data.MatterHint`, and the workflow uses it *only* when subject matching has
+already failed (`If_No_Matter_Use_Folder_Hint`). Real Graph notifications carry no hint and
+behave exactly as before. This matters because the subject often does not name the matter at
+all: 52 of those 272 messages mention 119.014 only in the body or an attachment.
+
 **Most notifications are not archivable, and that is normal.** Roughly half of what arrives is
 a change notification for a message that no longer exists at that id — a draft that was sent, a
 message moved or deleted. Graph returns 404. These are completed, not retried: retrying cannot
@@ -103,6 +128,28 @@ explicit complete/abandon, `deadLetteringOnMessageExpiration=true`, `lockDuratio
 
 `lockDuration` must exceed real run time. At `PT1M` the slowest runs lost their lock before
 completing and the message was redelivered while still being processed.
+
+**The blob name must stay unique per message.** It is
+`<sanitised subject, capped 150> [<last 24 chars of the Graph message id>].eml`. The suffix
+is not decoration. Until 2026-08-20 the name was the subject alone, so every reply in a
+thread wrote to the same path and silently overwrote the one before it — the archive kept
+one message per *subject*, not per message. Measured on matter 120.058: 53 stored files
+representing 16 actual conversations, with the surviving copies quoting threads 30 messages
+deep. That is why the search web part returned far fewer hits than the matters mailbox, and
+it is what accounting reported.
+
+Keep the suffix deterministic. The same message must always land on the same blob or
+`replay-dlq.ps1`, `recover-failed-runs.ps1` and `sweep-inbox.ps1` stop being safe to re-run.
+
+Versioning cannot save you here: the storage account has hierarchical namespace enabled, so
+Azure blob versioning is unavailable (`FeatureNotSupportedForAccount`) and an overwrite
+leaves no trace at all. Uniqueness in the name is the only protection there is.
+
+**Attachments still collide, and this is not fixed.** `Create_blob_for_Attachment` names by
+attachment name alone, so two different emails in the same matter that both attach
+`Invoice.pdf` or `image001.png` overwrite each other. Same defect as above, same silence.
+It needs the same treatment — most likely a per-message subfolder rather than a suffix, so
+downloaded files keep their real names.
 
 **`strFoundMatter` is the blob path.** If it is ever empty the archive writes to
 `/matters//Emails/` and still reports success. There is a guard on the condition; do not
