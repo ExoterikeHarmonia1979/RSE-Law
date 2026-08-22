@@ -1,0 +1,10 @@
+# Run artefacts, not source. These are rebuilt on demand and some are large:
+# archive-blobs.txt is a full listing of the container (~350k lines, tens of MB) and
+# archive-tails.txt is the index derived from it. Both are caches keyed by mtime.
+archive-blobs.txt
+archive-tails.txt
+allblobs*.txt
+
+# One CSV per reconciler run, plus the scheduled task's logs.
+missed-reconcile-*.csv
+reconcile-logs/

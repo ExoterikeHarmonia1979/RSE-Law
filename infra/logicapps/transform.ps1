@@ -89,14 +89,65 @@ $odata = $root.If_Odata_ID_is_valid.actions
 $notEmpty = $odata.Not_empty_subject.actions
 $found = $notEmpty.If_BlnFoundItem_and_not_calendar
 
-# calendar guard: coalesce so a null From/To no longer throws InvalidTemplate
+<#
+A blank subject is not a reason to throw the email away.
+
+Not_empty_subject guarded everything - matching, lookup and the blob write - so a message
+with no subject was skipped entirely and the run reported Succeeded. Measured on live
+traffic: 3 of 250 runs, one of them ordinary internal mail from MLee@rse-law.com. Nothing
+about a blank subject makes the message less worth keeping; it only makes it unresolvable,
+which is exactly what the unsorted bucket is for.
+
+The gate cannot simply be deleted. The subject is fed to the regex function as strData, and
+the function rejects an empty strData with 400 Bad Request, which would fail the run and
+abandon the message back to the queue in a loop.
+
+So substitute instead of gate: Subject_For_Matching is the subject when there is one and the
+literal "(no subject)" when there is not. The function then resolves it to
+UnsortedMatterCommunication like any other unmatchable subject, and the blob is named
+"(no subject) [<message id>].eml" - still unique per message, because the id tail carries
+the uniqueness, not the stem.
+
+Chained in front of the gate rather than added beside it: a Compose hanging off
+Get_Email_Subject would run in parallel with the gate and might not have executed when the
+condition is evaluated. Taking over the gate's own runAfter guarantees the order.
+#>
+$odata.Subject_For_Matching = @{
+  type = 'Compose'
+  runAfter = $odata.Not_empty_subject.runAfter
+  inputs = "@if(empty(trim(coalesce(outputs('Get_Email_Subject'),''))), '(no subject)', outputs('Get_Email_Subject'))"
+}
+$odata.Not_empty_subject.runAfter = @{ Subject_For_Matching = @('Succeeded') }
+# The gate is kept, not deleted, so the action graph and the run history stay comparable.
+# It now asserts that there is something to match on, which the substitution guarantees -
+# but if Subject_For_Matching ever yields empty, the old skip is still the safe outcome.
+$odata.Not_empty_subject.expression = @{ and = @(
+  @{ equals = @("@empty(trim(coalesce(outputs('Subject_For_Matching'),'')))", '@false') }
+) }
+
+<#
+Calendar events are excluded on purpose - the firm does not want them archived - but the
+test has to be what the message IS, not who is copied on it.
+
+It used to drop anything whose From or To contained the string "CALENDAR". The firm runs a
+calendar@rse-law.com mailbox that is routinely copied on ordinary matter correspondence, so
+the guard was discarding real mail: measured over 7,992 Inbox messages, 51 were caught and
+Graph classifies 50 of them as #microsoft.graph.message - ordinary email - against ONE genuine
+#microsoft.graph.eventMessageRequest. A 98% false-positive rate, silently, with subjects like
+"RE: DAE/JXK/MFB 98.070 - Def Frize Corp" and "06.211 - Chavez, et al vs. Uber Technologies".
+
+Graph already answers the question exactly. Meeting invites, responses and cancellations are
+returned as eventMessage / eventMessageRequest / eventMessageResponse; ordinary mail carries
+no such type. Matching on "eventMessage" covers all three and nothing else.
+
+The fetch has no $select, so the full resource - including @odata.type - is available.
+#>
 $found.expression = @{
   and = @(
     @{ equals = @('@variables(''blnFoundItem'')', '@true') }
     # guard the blob path: an empty matter would write everything to /matters//Emails/
     @{ equals = @('@empty(trim(coalesce(variables(''strFoundMatter''),'''')))', '@false') }
-    @{ not = @{ contains = @('@toUpper(coalesce(outputs(''Get_Email_From''),''''))', 'CALENDAR') } }
-    @{ not = @{ contains = @('@toUpper(coalesce(outputs(''Get_Email_To''),''''))',   'CALENDAR') } }
+    @{ not = @{ contains = @("@coalesce(body('HTTP_Graph_API_Call_to_Get_Email_Message_via_User')?['@odata.type'], '')", 'eventMessage') } }
   )
 }
 
@@ -185,8 +236,57 @@ $notEmpty.If_No_Matter_Use_Folder_Hint = @{
   }
   else = @{ actions = @{} }
 }
-# the write gate now waits on the fallback rather than on subject resolution alone
-$found.runAfter = @{ If_No_Matter_Use_Folder_Hint = @('Succeeded') }
+
+<#
+Last resort: a subject that resolved to something, but not to a matter.
+
+The regex function returns UnsortedMatterCommunication only when NOTHING in the subject
+matched. When something did match but the lookup list has no row for it, the function
+returns that value with type "Case/Claim No" and the workflow finds nothing - blnFoundItem
+stays false, strFoundMatter stays empty, and with no folder hint (Inbox has none) the mail
+was written nowhere and the run reported Succeeded.
+
+Measured on live traffic, this is the only remaining silent drop for ordinary mail. Real
+examples from one 2.5-hour window, every one of them a genuine business email:
+
+    Progressive Claim: 26-200023665                 -> claim 26-200023665, not in the list
+    Kanazawa vs. Pandit (Case No. 25STCV20780)      -> court case number, not in the list
+    Newly Generated Invoice 128592: Gideon Kisitu   -> invoice number that looks like a claim
+    Your Microsoft invoice G179227264 is ready      -> ditto
+
+A court case number or an invoice number that happens to fit a claim-number shape is
+exactly the input this has to survive. Falling back to the unsorted bucket makes the
+outcome the same as if the subject had matched nothing at all: stored, indexed and
+searchable rather than discarded.
+
+Deliberately placed AFTER the folder-hint fallback, so a real matter from the mailbox
+folder still wins; this only catches what neither the subject nor the folder could resolve.
+It does not affect calendar events - those are excluded by the write gate's own test, which
+is evaluated after this and does not care how strFoundMatter was set.
+#>
+$notEmpty.If_Still_No_Matter_Use_Unsorted = @{
+  type = 'If'
+  runAfter = @{ If_No_Matter_Use_Folder_Hint = @('Succeeded') }
+  expression = @{ or = @(
+    @{ equals = @('@variables(''blnFoundItem'')', '@false') }
+    @{ equals = @('@empty(trim(coalesce(variables(''strFoundMatter''),'''')))', '@true') }
+  ) }
+  actions = @{
+    Set_variable_blnFoundItem_Unsorted = @{
+      type = 'SetVariable'; runAfter = @{}
+      inputs = @{ name = 'blnFoundItem'; value = '@true' }
+    }
+    Set_variable_strFoundMatter_Unsorted = @{
+      type = 'SetVariable'
+      runAfter = @{ Set_variable_blnFoundItem_Unsorted = @('Succeeded') }
+      inputs = @{ name = 'strFoundMatter'; value = 'UnsortedMatterCommunication' }
+    }
+  }
+  else = @{ actions = @{} }
+}
+
+# the write gate now waits on the last fallback rather than on subject resolution alone
+$found.runAfter = @{ If_Still_No_Matter_Use_Unsorted = @('Succeeded') }
 
 # Collapse the two duplicate branches (site-exists / new-site) into one blob path.
 # Kept: the sanitised .eml write and the attachment loop. Dropped: their byte-identical twins.
@@ -232,7 +332,8 @@ $found.actions = @{
   Email_Subject_Clean = @{
     type = 'Compose'
     runAfter = @{}
-    inputs = "@" + (San "outputs('Get_Email_Subject')")
+    # the substituted subject, so a blank-subject message still yields a usable blob stem
+    inputs = "@" + (San "outputs('Subject_For_Matching')")
   }
   Email_Blob_Name = @{
     type = 'Compose'
@@ -435,6 +536,10 @@ $notEmpty.Get_Reg_Ex_Match_Type = @{
   inputs = "@body('HTTP_Az_Func_Reg_Matter_Full_Subject_')?['type']"
 }
 $regex.runAfter = @{ Get_Reg_Ex_Match_Type = @('Succeeded') }
+
+# Match on the substituted subject too. The function returns 400 for an empty strData, which
+# would fail the run and put the message into an abandon/retry loop rather than archiving it.
+$notEmpty.HTTP_Az_Func_Reg_Matter_Full_Subject_.inputs.body = @{ strData = "@{outputs('Subject_For_Matching')}" }
 # Only values the function classified as an RSE File No are trusted this way -
 # those passed the strict anchored pattern. A Case/Claim number is just an
 # external reference and still needs the list to map it onto a matter.

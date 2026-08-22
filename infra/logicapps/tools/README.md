@@ -64,6 +64,52 @@ version history was never archived.
 excludes. Deleted groups are restorable until **2026-09-21** via
 `POST /directory/deletedItems/{id}/restore`.
 
+## Missed notifications
+
+Graph does not always deliver the change notifications it promised. When it gives up it
+sends a lifecycle notification instead:
+
+```json
+{"type":"Missed", "data":{"SubscriptionId":"...", "lifecycleEvent":"missed", "resourceData":null}}
+```
+
+That is Graph saying *mail arrived on this subscription and we failed to tell you about it*.
+It does not say which mail, or how much. The archive workflow finds no OData ID in the
+payload, skips it, completes it off the queue and reports **Succeeded** - so the mail behind
+it is never archived and nothing anywhere records that it existed.
+
+Measured over 600 runs spanning 3.7 hours: **21 Missed events across 14 subscriptions**,
+about **137 a day**.
+
+The obvious fix - look the subscription up and re-sync just that resource - does not work
+here. Of those 14 subscription ids, 13 no longer existed by the end of the same window: the
+renewal job replaces subscriptions rather than extending them, so ids churn continuously and
+a Missed event is usually unresolvable to a mailbox after the fact.
+
+So reconciliation is **per mailbox, not per subscription**, and runs on a trailing window
+whether or not a Missed event was seen. That also recovers mail lost to throttling, transient
+Graph failures and expired subscriptions, none of which announce themselves either.
+
+| | |
+|---|---|
+| `reconcile-missed.ps1` | Compares every subscribed mailbox against the archive over a trailing window and enqueues what is absent. Absence is by **message-id tail**, the same identity the blob names carry - never by subject or date. Dry run unless `-Execute`. |
+| `run-reconcile-scheduled.ps1` | Scheduled-task wrapper. Runs a 3-hour window every 2 hours so consecutive runs overlap, logs each run, prunes logs after 30 days. |
+
+Installed as scheduled task **`RSE-Archive-Reconcile`**, every 2 hours.
+
+Two details that matter if you change this:
+
+- It **skips Drafts, Junk, Deleted Items** and the rest of the non-correspondence folders.
+  The live path only ever sees `created` notifications, so it never offers mail the user has
+  since binned; a reconciler sees mail where it sits *now* and without this would archive it.
+- It takes the Service Bus key from `az`, not from `%TEMP%\sbkey.txt` like `sweep-inbox.ps1`.
+  A temp file is fine for a hand-run sweep and useless for a scheduled job - it would fail at
+  the enqueue, after doing all the work.
+
+First run recovered **244 messages** from an 8-hour window. The 42 that remained were all
+`eventMessageRequest` / `eventMessageResponse` - calendar items, which the firm does not want
+archived - and 42 more were skipped as bins and drafts. No ordinary mail was left behind.
+
 ## The lesson that recurs
 
 Every serious bug here was **a failure recorded as data**:
@@ -74,6 +120,8 @@ Every serious bug here was **a failure recorded as data**:
 - Graph paging duplicates looked like blob-name collisions
 - subject-stem matching made 1,427 distinct messages look redundant
 - and the old flow itself wrote 404 responses into `.eml` files
+- a `Missed` notification - Graph *reporting its own failure* - was read as "no message here"
+  and completed off the queue as a success
 
 The scripts therefore record *why* something failed rather than returning an empty result,
 and abort rather than emit a plausible-looking wrong answer. Keep that property.
