@@ -206,17 +206,45 @@ individually came back `exists = true`. Deleting on the listing's word would hav
 So the listing is only a candidate filter. Each candidate is then confirmed one at a time
 against storage using the name decoded from the INDEX key, which is authoritative.
 #>
-Write-Host "`nconfirming $($orphans.Count) candidates against storage one by one ..."
-$confirmed = @(); $false_ = 0; $i = 0
-foreach ($o in $orphans) {
-  $i++
-  $exists = (& $az storage blob exists --account-name samatters --container-name matters `
-               --name $o.Blob --auth-mode login --query exists -o tsv 2>$null)
-  if ("$exists" -eq 'true') { $false_++ } else { $confirmed += $o }
-  if ($i % 200 -eq 0) { Write-Host ("  checked {0}/{1}; {2} false alarms so far" -f $i, $orphans.Count, $false_) }
+Write-Host "`nconfirming $($orphans.Count) candidates against storage ..."
+$stoken = (& $az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)
+if (-not $stoken) { throw "could not get a storage token to confirm candidates" }
+
+# A ranged/HEAD request per candidate, in parallel. `az storage blob exists` would be a
+# process launch each time - hours for this many - and the whole point of this step is that it
+# has to run every time, not be skipped because it is slow.
+#
+# x-ms-version is REQUIRED for bearer auth. Omitting it returns 403, and a 403 counted as
+# "missing" would delete live documents; this repo has made that exact mistake before, when a
+# dropped x-ms-version turned 195,815 auth failures into "no Message-ID".
+$results = $orphans | ForEach-Object -ThrottleLimit 24 -Parallel {
+  $u = 'https://samatters.blob.core.windows.net/matters/' +
+       (($_.Blob -split '/' | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/')
+  $h = @{ Authorization = "Bearer $using:stoken"; 'x-ms-version' = '2021-12-02' }
+  $status = 0
+  for ($try = 1; $try -le 3; $try++) {
+    try { $status = (Invoke-WebRequest -Uri $u -Method Head -Headers $h -SkipHttpErrorCheck).StatusCode; break }
+    catch { Start-Sleep -Milliseconds (200 * $try) }
+  }
+  [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name; Status = $status }
 }
-Write-Host ("  {0} candidates were present after all (listing artefact), {1} confirmed missing" -f $false_, $confirmed.Count)
-$orphans = $confirmed
+
+$present = @($results | Where-Object Status -eq 200)
+$missing = @($results | Where-Object Status -eq 404)
+$unknown = @($results | Where-Object { $_.Status -ne 200 -and $_.Status -ne 404 })
+
+Write-Host ("  {0,6}  present after all - the blob listing lost the name" -f $present.Count)
+Write-Host ("  {0,6}  confirmed missing" -f $missing.Count)
+if ($unknown.Count) {
+  Write-Host ("  {0,6}  INDETERMINATE (auth/throttle) - excluded, never treated as missing" -f $unknown.Count)
+  $unknown | Group-Object Status | ForEach-Object { "          status $($_.Name): $($_.Count)" }
+  # A large indeterminate share means the check itself is failing, and acting on the rest
+  # would be acting on partial evidence.
+  if ($unknown.Count -gt 0.05 * $results.Count) {
+    throw "too many indeterminate results ($($unknown.Count) of $($results.Count)) - refusing to propose deletions"
+  }
+}
+$orphans = @($missing | ForEach-Object { [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name } })
 
 $redundant = @(); $unbacked = @()
 foreach ($o in $orphans) {
