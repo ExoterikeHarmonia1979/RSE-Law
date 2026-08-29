@@ -66,6 +66,12 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
   const [listLoading, setListLoading] = React.useState(false);
   const [listError, setListError] = React.useState<string | undefined>(undefined);
   const [orderByDate, setOrderByDate] = React.useState(true);
+  // Set once the user picks a sort themselves; from then on a matter number is left in
+  // whatever order they chose rather than quietly switching under them.
+  const [sortPinned, setSortPinned] = React.useState(false);
+  // True when the last search was a bare matter number and was ranked by relevance for
+  // that reason, so the control can explain itself instead of looking wrong.
+  const [autoRelevance, setAutoRelevance] = React.useState(false);
 
   const [selected, setSelected] = React.useState<IEmailItem | undefined>(undefined);
   const [preview, setPreview] = React.useState<IEmailPreview | undefined>(undefined);
@@ -115,17 +121,28 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     });
   }, [saveListWidth]);
 
-  const runSearch = React.useCallback((q: string, skip: number, byDate: boolean, append: boolean): void => {
+  // allowAuto is passed rather than read from sortPinned: the toggle handler sets that state
+  // and searches in the same click, and a state update is not visible to this closure until
+  // the next render, so reading it here would let the first explicit sort be overridden by
+  // the very auto-behaviour the click was rejecting.
+  const runSearch = React.useCallback((
+    q: string, skip: number, byDate: boolean, append: boolean, allowAuto: boolean
+  ): void => {
     const seq = ++searchSeq.current;
     setListLoading(true);
     setListError(undefined);
-    service.search(q, { top: pageSize, skip, orderByDate: byDate })
+    service.search(q, { top: pageSize, skip, orderByDate: byDate, allowAutoRelevance: allowAuto })
       .then((page) => {
         if (seq !== searchSeq.current) { return; } // superseded by a newer search
+        // Sort by what the service actually did, not by what was asked. A bare matter
+        // number comes back relevance-ranked even though byDate is true, and re-sorting
+        // that by date here would undo the ranking before it ever reached the screen.
+        const servedByDate = page.orderedByDate !== undefined ? page.orderedByDate : byDate;
         setItems((prev) => {
           const merged = dedupeByPath(append ? prev.concat(page.items) : page.items);
-          return byDate ? sortByDateDesc(merged) : merged;
+          return servedByDate ? sortByDateDesc(merged) : merged;
         });
+        setAutoRelevance(page.matterLookup === true);
         setTotalCount(page.totalCount);
         setBroadened(page.broadened === true);
         setListLoading(false);
@@ -145,24 +162,25 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
 
   // Initial load: show the most recent messages, like opening an Outlook folder.
   React.useEffect(() => {
-    runSearch('', 0, true, false);
+    runSearch('', 0, true, false, true);
   }, [runSearch]);
 
   const handleSearch = React.useCallback((q: string): void => {
     setQuery(q);
-    runSearch(q, 0, orderByDate, false);
-  }, [runSearch, orderByDate]);
+    runSearch(q, 0, orderByDate, false, !sortPinned);
+  }, [runSearch, orderByDate, sortPinned]);
 
   const handleToggleSort = React.useCallback((): void => {
+    setSortPinned(true);
     setOrderByDate((prev) => {
-      runSearch(query, 0, !prev, false);
+      runSearch(query, 0, !prev, false, false);
       return !prev;
     });
   }, [runSearch, query]);
 
   const handleLoadMore = React.useCallback((): void => {
-    runSearch(query, items.length, orderByDate, true);
-  }, [runSearch, query, items.length, orderByDate]);
+    runSearch(query, items.length, orderByDate, true, !sortPinned);
+  }, [runSearch, query, items.length, orderByDate, sortPinned]);
 
   const handleSelect = React.useCallback((item: IEmailItem): void => {
     setSelected(item);
@@ -225,6 +243,7 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
           selectedPath={selected ? selected.storagePath : undefined}
           loading={listLoading}
           orderByDate={orderByDate}
+          autoRelevance={autoRelevance}
           hasMore={items.length < totalCount}
           width={listWidth}
           emlPreviewUrl={emlPreviewUrl}
@@ -257,3 +276,4 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
 };
 
 export default OutlookSearch;
+

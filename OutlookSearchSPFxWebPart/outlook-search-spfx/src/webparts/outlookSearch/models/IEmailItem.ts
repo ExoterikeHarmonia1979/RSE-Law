@@ -29,6 +29,17 @@ export interface ISearchPage {
    * what was asked for is worse than returning nothing.
    */
   broadened?: boolean;
+  /**
+   * The ordering the service actually applied. The caller merges pages and re-sorts
+   * client-side, so it has to sort by the same rule the server used — re-sorting a
+   * relevance-ranked result by date would discard the ranking.
+   */
+  orderedByDate?: boolean;
+  /**
+   * True when the query was a bare matter number and was ranked by relevance
+   * automatically. Surfaced so the sort control can say why it changed.
+   */
+  matterLookup?: boolean;
 }
 
 export interface IPreviewAttachment {

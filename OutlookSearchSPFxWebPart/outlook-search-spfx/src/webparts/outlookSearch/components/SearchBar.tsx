@@ -146,12 +146,18 @@ export const SearchBar: React.FC<ISearchBarProps> = (props) => {
               <span className={styles.suggestText}>{s.text}</span>
             </button>
           ))}
-          <div className={styles.suggestHint}>
-            Try: <code>from:&quot;Scott Dallas&quot;</code>&nbsp; <code>subject:review</code>&nbsp;
-            <code>after:2026-01-01</code>&nbsp; <code>hasattachment:yes</code>
-          </div>
         </div>
       )}
+      {/* Always visible, not only inside the suggestion flyout.
+          The hint used to render only when there was at least one suggestion, so on an
+          empty box with no recent searches - the state most people start from - nothing
+          advertised the prefixes at all. subject: is the one that matters most here:
+          a file number on its own matches every billing and deadline digest that lists it,
+          while subject:109.140 returns just that matter's own correspondence. */}
+      <div className={styles.searchHint}>
+        Try <code>subject:109.140</code> for one file&nbsp;· <code>from:&quot;Scott Dallas&quot;</code>
+        &nbsp;· <code>after:2026-01-01</code>&nbsp;· <code>hasattachment:yes</code>
+      </div>
     </div>
   );
 };

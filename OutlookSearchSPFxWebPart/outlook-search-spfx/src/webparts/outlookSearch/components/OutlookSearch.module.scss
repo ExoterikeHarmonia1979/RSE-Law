@@ -98,6 +98,21 @@ $text-secondary: #616161;
   }
 }
 
+/* Permanent hint under the search box. Same look as the flyout hint, but always
+   present — the prefixes are the whole answer to "how do I search one file number"
+   and were previously only shown once a suggestion happened to be on screen. */
+.searchHint {
+  padding: 6px 2px 0;
+  font-size: 11px;
+  color: $text-secondary;
+
+  code {
+    background: $hover-bg;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+}
+
 /* ── Pane layout ─────────────────────────────────────────── */
 
 .panes {
@@ -161,6 +176,18 @@ $text-secondary: #616161;
   &:hover {
     color: $outlook-blue;
   }
+}
+
+/* Marks the sort as chosen for you rather than by you, so "Best match" on a file
+   number does not look like the control is stuck. */
+.sortAuto {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: $hover-bg;
+  color: $text-secondary;
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 .listScroll {

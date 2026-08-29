@@ -1,6 +1,6 @@
 import { HttpClient, HttpClientResponse, IHttpClientOptions } from '@microsoft/sp-http';
 import { IEmailItem, IEmailPreview, ISearchPage } from '../models/IEmailItem';
-import { parseOutlookQuery } from './OutlookQueryParser';
+import { parseOutlookQuery, isMatterLookup } from './OutlookQueryParser';
 
 export interface IAzureSearchConfig {
   serviceUrl: string;   // https://<service>.search.windows.net
@@ -14,6 +14,12 @@ export interface ISearchOptions {
   top: number;
   skip: number;
   orderByDate: boolean;
+  /**
+   * Whether a bare matter number may switch itself to relevance ordering.
+   * False once the user has picked a sort, so an explicit choice is never overridden.
+   * Defaults to allowed when omitted.
+   */
+  allowAutoRelevance?: boolean;
 }
 
 // Sentinel highlight tags: everything else in the snippet gets HTML-escaped,
@@ -136,7 +142,14 @@ export class AzureSearchService {
     // matches on top, so they interleave by date instead. Measured on that query, the
     // first page went from 7 relevant results out of 8 to 2 out of 8. Lowering k does
     // not fix it; the problem is that date order has no notion of relevance at all.
-    if (parsed.text && !options.orderByDate) {
+    // A bare matter number ranks by relevance instead of date — see isMatterLookup. Only
+    // while the user has not chosen a sort themselves; an explicit choice always wins, which
+    // is what allowAutoRelevance carries.
+    const matterLookup =
+      options.allowAutoRelevance !== false && isMatterLookup(parsed.text);
+    const byDate = options.orderByDate && !matterLookup;
+
+    if (parsed.text && !byDate && !matterLookup) {
       body.vectorQueries = [{
         kind: 'text',
         text: parsed.text,
@@ -147,7 +160,7 @@ export class AzureSearchService {
     if (parsed.filter) {
       body.filter = parsed.filter;
     }
-    if (options.orderByDate) {
+    if (byDate) {
       // sent_date is the .eml Date: header — the same value the UI displays
       // and groups by, so order and group headers always agree. Documents the
       // skill could not parse have no sent_date and sort to the end.
@@ -184,7 +197,12 @@ export class AzureSearchService {
     return {
       items: values.map(toEmailItem),
       totalCount: count,
-      broadened
+      broadened,
+      // What the ordering ACTUALLY was, not what was asked for. The caller re-sorts the
+      // merged list client-side, and doing that by date after the service deliberately
+      // ranked by relevance would throw the ranking away again.
+      orderedByDate: byDate,
+      matterLookup
     };
   }
 

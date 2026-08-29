@@ -3,7 +3,7 @@
   "solution": {
     "name": "outlook-search-spfx-client-side-solution",
     "id": "88d5b16c-c3be-4622-b033-2f74450c0369",
-    "version": "1.0.10.0",
+    "version": "1.0.11.0",
     "includeClientSideAssets": true,
     "skipFeatureDeployment": true,
     "isDomainIsolated": false,
