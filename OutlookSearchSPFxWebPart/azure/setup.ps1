@@ -27,6 +27,8 @@ param(
   [string]$Sku              = 'basic',
   [string]$StorageAccount   = 'samatters',
   [string]$StorageAccountRg = 'DefaultResourceGroup-EUS',  # RG that holds samatters
+  [string]$FunctionApp      = 'RegExAzFunc',               # hosts EmlAttachmentNamesSkill
+  [string]$FunctionAppRg    = 'regexazfunc2',
   [string]$ApiVersion       = '2024-07-01'
 )
 
@@ -37,15 +39,40 @@ az account set --subscription $SubscriptionId
 # 1. New resource group dedicated to search
 az group create --name $ResourceGroup --location $Location --output table
 
-# 2. Basic-tier search service (15 GB per partition vs 50 MB on free)
-az search service create `
-  --name $SearchService `
-  --resource-group $ResourceGroup `
-  --location $Location `
-  --sku $Sku `
-  --partition-count 1 `
-  --replica-count 1 `
-  --output table
+<#
+2. Basic-tier search service (15 GB per partition vs 50 MB on free)
+
+`az search service create` is create-OR-UPDATE: run against an existing service it overwrites
+every property with what is passed, and resets what is not passed. The live service carries
+settings this script never mentions - a SystemAssigned managed identity, semanticSearch=free,
+authOptions=aadOrApiKey - and that identity is what the embedding skill and the index
+vectorizer authenticate to Azure OpenAI with. The web part vectorises at query time, so losing
+it breaks search for users immediately, and recreating it mints a NEW principalId that no
+longer holds the 'Cognitive Services OpenAI User' role.
+
+So this step is skipped when the service already exists. Provisioning a new one still works.
+#>
+$exists = az search service show --name $SearchService --resource-group $ResourceGroup --query name -o tsv 2>$null
+if ($exists) {
+  Write-Host "Search service '$SearchService' already exists - leaving its configuration alone."
+  Write-Host "  (identity, semantic search and auth options are NOT re-asserted by this script)"
+} else {
+  az search service create `
+    --name $SearchService `
+    --resource-group $ResourceGroup `
+    --location $Location `
+    --sku $Sku `
+    --partition-count 1 `
+    --replica-count 1 `
+    --identity-type SystemAssigned `
+    --output table
+
+  Write-Host ''
+  Write-Host 'NOTE: a new service has a new managed identity. Grant it access to Azure OpenAI:'
+  Write-Host "  az role assignment create --assignee <principalId> --role 'Cognitive Services OpenAI User' \"
+  Write-Host "    --scope <resourceId of the rse-matters-openai account>"
+  Write-Host ''
+}
 
 # 3. Keys (kept in variables; never printed)
 $adminKey = az search admin-key show --service-name $SearchService --resource-group $ResourceGroup --query primaryKey -o tsv
@@ -68,7 +95,28 @@ $idx = Get-Content "$PSScriptRoot/index.json" -Raw
 Invoke-RestMethod -Method Put -Uri "$base/indexes/matters-eml-index?api-version=$ApiVersion" -Headers $headers -Body $idx | Out-Null
 Write-Host 'Index created.'
 
-# 7. Indexer (cracks .eml/.msg, extracts body + attachment text into content)
+<#
+7. Skillset (attachment names, sent date, embeddings)
+
+This step was missing. indexer.json names skillsetName 'matters-eml-skillset', so against a
+fresh service the indexer PUT below failed on a skillset that nothing had created - the script
+could never actually provision from scratch, only update a service someone had built by hand.
+
+skillset.json carries a __FUNCTION_KEY__ placeholder for EmlAttachmentNamesSkill. Nothing
+substituted it either, despite HybridVectorSearch.md claiming it happened "at provisioning".
+#>
+$funcKey = $env:EML_SKILL_FUNCTION_KEY
+if (-not $funcKey) {
+  $funcKey = az functionapp keys list -g $FunctionAppRg -n $FunctionApp --query 'functionKeys.default' -o tsv 2>$null
+}
+if (-not $funcKey) {
+  throw "Could not resolve the function key for EmlAttachmentNamesSkill. Set EML_SKILL_FUNCTION_KEY or grant access to $FunctionApp in $FunctionAppRg."
+}
+$skill = (Get-Content "$PSScriptRoot/skillset.json" -Raw).Replace('__FUNCTION_KEY__', $funcKey)
+Invoke-RestMethod -Method Put -Uri "$base/skillsets/matters-eml-skillset?api-version=$ApiVersion" -Headers $headers -Body $skill | Out-Null
+Write-Host 'Skillset created.'
+
+# 8. Indexer (cracks .eml/.msg and attachment documents, extracts body + text into content)
 $ixr = Get-Content "$PSScriptRoot/indexer.json" -Raw
 Invoke-RestMethod -Method Put -Uri "$base/indexers/matters-eml-indexer?api-version=$ApiVersion" -Headers $headers -Body $ixr | Out-Null
 Write-Host 'Indexer created and first run started.'

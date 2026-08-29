@@ -87,7 +87,29 @@ public class EmlPreviewFunc
             return new BadRequestObjectResult("Provide 'storagePath'.");
         }
 
-        var (message, error) = await LoadMessage(request.StoragePath);
+        // A loose document (an attachment indexed in its own right) is not an email and must
+        // not be run through MimeKit. Describe it instead, and list it as its own single
+        // attachment so the reading pane's existing open/download controls work on it.
+        var (docBytes, docName, docError) = await LoadBlobBytes(request.StoragePath);
+        if (docError != null) { return docError; }
+        if (!IsMailBlob(docName!))
+        {
+            string file = Path.GetFileName(docName!);
+            return new OkObjectResult(new
+            {
+                subject = file,
+                from = "",
+                to = Array.Empty<string>(),
+                cc = Array.Empty<string>(),
+                date = "",
+                htmlBody = (string?)null,
+                textBody = $"{file} is an attachment saved with an archived message. "
+                         + "Use the control above to open or download it.",
+                attachments = new[] { new AttachmentInfo { Name = file, SizeBytes = docBytes!.LongLength } }
+            });
+        }
+
+        var (message, _, error) = await LoadMessage(request.StoragePath);
         if (error != null) { return error; }
 
         string? html = message!.HtmlBody;
@@ -136,7 +158,21 @@ public class EmlPreviewFunc
             return new BadRequestObjectResult("Provide 'path' and 'att' query parameters.");
         }
 
-        var (message, error) = await LoadMessage(storagePath);
+        // When the blob IS the attachment, there is no message to search inside - serve it.
+        var (rawBytes, rawName, rawError) = await LoadBlobBytes(storagePath);
+        if (rawError != null) { return rawError; }
+        if (!IsMailBlob(rawName!))
+        {
+            string file = Path.GetFileName(rawName!);
+            if (!string.Equals(file, attachmentName, StringComparison.OrdinalIgnoreCase))
+            {
+                return new NotFoundObjectResult($"'{attachmentName}' was not found.");
+            }
+            req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition(IsDownload(req) ? "attachment" : "inline", file);
+            return new FileContentResult(rawBytes!, InferContentType(file));
+        }
+
+        var (message, _, error) = await LoadMessage(storagePath);
         if (error != null) { return error; }
 
         foreach (MimeEntity entity in message!.Attachments)
@@ -158,8 +194,7 @@ public class EmlPreviewFunc
             // images, text — in the tab and downloads the rest by name. dl=1 forces
             // the save-file path for the explicit download control in the web part.
             string disposition = IsDownload(req) ? "attachment" : "inline";
-            req.HttpContext.Response.Headers["Content-Disposition"] =
-                $"{disposition}; filename=\"{SanitizeFileName(attachmentName)}\"";
+            req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition(disposition, attachmentName);
             return new FileContentResult(ms.ToArray(), contentType);
         }
 
@@ -184,10 +219,17 @@ public class EmlPreviewFunc
         // the message. It should be exactly what was received.
         string fileName = Path.GetFileName(blobName!);
         if (string.IsNullOrWhiteSpace(fileName)) { fileName = "message.eml"; }
-        if (!fileName.EndsWith(".eml", StringComparison.OrdinalIgnoreCase)) { fileName += ".eml"; }
 
-        req.HttpContext.Response.Headers["Content-Disposition"] =
-            $"attachment; filename=\"{SanitizeFileName(fileName)}\"";
+        // Only a mail blob gets the .eml treatment. Appending it unconditionally used to hand
+        // back "Mediation Brief.doc.eml" - a Word document renamed to something Outlook would
+        // try to open as a message.
+        if (!IsMailBlob(fileName))
+        {
+            req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition("attachment", fileName);
+            return new FileContentResult(bytes!, InferContentType(fileName));
+        }
+
+        req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition("attachment", fileName);
         return new FileContentResult(bytes!, "message/rfc822");
     }
 
@@ -203,14 +245,80 @@ public class EmlPreviewFunc
     internal static string SanitizeFileName(string name) =>
         Regex.Replace(name, @"[""\r\n\\/]", "_");
 
+    /// <summary>
+    /// Builds a Content-Disposition value that survives a non-ASCII file name.
+    /// <para>
+    /// HTTP header values are Latin-1. Assigning one containing 'ó' or an en-dash throws
+    /// inside Kestrel, the exception escapes the function, and the caller gets a bare 500
+    /// with an empty body - which is what the archive was doing to every message whose
+    /// subject had an accent or an Outlook-autocorrected dash. Spanish party names and
+    /// en-dashes are common in this corpus, so this was a large share of all downloads:
+    /// "109.108 Huey Samuel Napier v. Daniel Tile Inc. et al. - Intercambio de Información.eml"
+    /// failed every time while its plain-ASCII neighbours worked.
+    /// </para>
+    /// <para>
+    /// RFC 6266: send an ASCII-only <c>filename</c> that any client can read, plus
+    /// <c>filename*</c> with the real UTF-8 name percent-encoded per RFC 5987. Every current
+    /// browser prefers <c>filename*</c>, so the saved file keeps its accents.
+    /// </para>
+    /// </summary>
+    internal static string ContentDisposition(string disposition, string fileName)
+    {
+        string clean = SanitizeFileName(fileName);
+
+        // '?' rather than dropping the character, so the fallback keeps the name's shape for
+        // any client old enough to ignore filename*.
+        string ascii = Regex.Replace(clean, @"[^ -~]", "?");
+        if (string.IsNullOrWhiteSpace(ascii.Replace("?", ""))) { ascii = "download"; }
+
+        string encoded = Uri.EscapeDataString(clean);
+        return $"{disposition}; filename=\"{ascii}\"; filename*=UTF-8''{encoded}";
+    }
+
     // ── Shared blob/MIME plumbing ────────────────────────────────────────
 
-    private async Task<(MimeMessage? Message, IActionResult? Error)> LoadMessage(string storagePath)
+    /// <summary>
+    /// True when the blob is a mail message rather than a loose document.
+    /// <para>
+    /// The indexer's indexedFileNameExtensions covers .pdf, .docx, .htm and the rest, because
+    /// attachments are stored as their own blobs and the firm wants their contents searchable.
+    /// That means an attachment is its own document in the index, and the web part will happily
+    /// hand one of those to this function as if it were an email.
+    /// </para>
+    /// </summary>
+    internal static bool IsMailBlob(string blobName) =>
+        blobName.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) ||
+        blobName.EndsWith(".msg", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Parses the blob as MIME.
+    /// <para>
+    /// MimeMessage.Load used to be called unguarded, so a PDF - or any .eml truncated or
+    /// corrupted in storage - threw out of the function and the host returned a bare 500 with
+    /// an empty body. From the reading pane that surfaced as an unexplained Azure error on some
+    /// search results and not others, with nothing to distinguish them beforehand.
+    /// </para>
+    /// </summary>
+    private async Task<(MimeMessage? Message, string? BlobName, IActionResult? Error)> LoadMessage(string storagePath)
     {
-        var (bytes, _, error) = await LoadBlobBytes(storagePath);
-        if (error != null) { return (null, error); }
+        var (bytes, blobName, error) = await LoadBlobBytes(storagePath);
+        if (error != null) { return (null, null, error); }
+
         using var stream = new MemoryStream(bytes!);
-        return (MimeMessage.Load(stream), null);
+        try
+        {
+            return (MimeMessage.Load(stream), blobName, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Blob {BlobName} is not parseable as a MIME message", blobName);
+            return (null, blobName, new ObjectResult(new
+            {
+                error = "This file is not a readable email message.",
+                blob = Path.GetFileName(blobName)
+            })
+            { StatusCode = StatusCodes.Status415UnsupportedMediaType });
+        }
     }
 
     /// <summary>Fetches the raw blob and the name it is stored under. Separate from
@@ -332,3 +440,4 @@ public class EmlPreviewFunc
         return html;
     }
 }
+

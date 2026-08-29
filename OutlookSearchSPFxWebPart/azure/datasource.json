@@ -6,5 +6,19 @@
   },
   "container": {
     "name": "matters"
+  },
+  "//": [
+    "Without this, deleting a blob leaves its document in the index forever. The row still",
+    "appears in search results and only fails when someone clicks it, because the download",
+    "URL is built from metadata_storage_path and the blob behind it is gone:",
+    "    EmlPreviewFunc?path=... -> 404 'The .eml blob was not found.'",
+    "That is a live, user-visible defect - see infra/logicapps/tools/purge-index-orphans.ps1,",
+    "which cleans up the ones already stranded.",
+    "",
+    "The policy was added directly on the live service and was missing here, so re-running",
+    "setup.ps1 would have silently removed it and made every future deletion permanent."
+  ],
+  "dataDeletionDetectionPolicy": {
+    "@odata.type": "#Microsoft.Azure.Search.NativeBlobSoftDeleteDeletionDetectionPolicy"
   }
 }
