@@ -8,10 +8,10 @@
   },
   "parameters": {
     "batchSize": null,
-    "maxFailedItems": 1000,
-    "maxFailedItemsPerBatch": 200,
+    "maxFailedItems": 20000,
+    "maxFailedItemsPerBatch": 2000,
     "configuration": {
-      "indexedFileNameExtensions": ".eml,.msg",
+      "indexedFileNameExtensions": ".eml,.msg,.pdf,.docx,.doc,.xlsx,.xls,.htm,.html,.csv,.rtf,.txt,.pptx,.ppt",
       "dataToExtract": "contentAndMetadata",
       "parsingMode": "default",
       "failOnUnsupportedContentType": false,

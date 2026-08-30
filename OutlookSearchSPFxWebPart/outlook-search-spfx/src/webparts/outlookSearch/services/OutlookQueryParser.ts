@@ -27,6 +27,30 @@ export interface IParsedQuery {
   text: string;
 }
 
+/**
+ * A matter/file number on its own — "109.140", "06.211", "98.070", "130.035B".
+ *
+ * Typing one is a lookup, not a question, and the two need opposite handling:
+ *
+ *  - Date order is wrong for it. The billing, appeals and deadline digests name every
+ *    matter in the firm and are regenerated daily, so they are always the newest documents
+ *    mentioning any number. Measured on 109.140: date-sorted, the first fourteen results
+ *    are digests and the actual case thread starts at position 16; ranked by relevance,
+ *    all of the top twenty are the case thread.
+ *
+ *  - The vector half is wrong for it too. There is no sentence to embed, so it contributes
+ *    only near-neighbours: on 109.140 it took 162 hits to 212 and pushed unrelated mail
+ *    into the top ten.
+ *
+ * Anything more than the bare number — "109.140 deposition" — is a real query again and is
+ * left alone.
+ */
+const MATTER_ONLY = /^\d{2,3}[A-Za-z]?\.\d{3,4}[A-Za-z]?$/;
+
+export function isMatterLookup(text: string): boolean {
+  return MATTER_ONLY.test(text.trim());
+}
+
 const FIELD_MAP: { [prefix: string]: string } = {
   from: 'metadata_message_from',
   to: 'metadata_message_to',

@@ -10,6 +10,8 @@ export interface IEmailListProps {
   selectedPath: string | undefined;
   loading: boolean;
   orderByDate: boolean;
+  /** The last search was a bare file number and was ranked by relevance for that reason. */
+  autoRelevance: boolean;
   hasMore: boolean;
   /** Pane width in px — controlled by the splitter in OutlookSearch. */
   width: number;
@@ -93,7 +95,7 @@ function dateGroup(iso: string): string {
 
 export const EmailList: React.FC<IEmailListProps> = (props) => {
   const {
-    items, totalCount, selectedPath, loading, orderByDate,
+    items, totalCount, selectedPath, loading, orderByDate, autoRelevance,
     hasMore, width, emlPreviewUrl, onSelect, onToggleSort, onLoadMore
   } = props;
 
@@ -105,8 +107,21 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
         <span className={styles.listTitle}>
           Results{totalCount > 0 ? ` (${totalCount.toLocaleString()})` : ''}
         </span>
-        <button type="button" className={styles.sortToggle} onClick={onToggleSort}>
-          {orderByDate ? 'By Date' : 'Top Results'} <Icon iconName="ChevronDown" />
+        {/* "By Date" / "Top Results" read as display options, so nobody realised the first
+            was discarding relevance entirely. These name what the ordering IS. */}
+        <button
+          type="button"
+          className={styles.sortToggle}
+          onClick={onToggleSort}
+          title={
+            autoRelevance
+              ? 'A file number on its own is ranked by best match, because the daily billing and deadline digests mention every matter and would otherwise fill the newest results. Click to sort by date instead.'
+              : (orderByDate ? 'Sorted newest first. Click to rank by best match.' : 'Ranked by best match. Click to sort newest first.')
+          }
+        >
+          {orderByDate ? 'Newest first' : 'Best match'}
+          {autoRelevance && <span className={styles.sortAuto}>auto</span>}
+          <Icon iconName="ChevronDown" />
         </button>
       </div>
 
@@ -217,3 +232,4 @@ export const EmailList: React.FC<IEmailListProps> = (props) => {
     </div>
   );
 };
+

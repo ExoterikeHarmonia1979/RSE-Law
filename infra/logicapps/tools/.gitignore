@@ -8,3 +8,7 @@ allblobs*.txt
 # One CSV per reconciler run, plus the scheduled task's logs.
 missed-reconcile-*.csv
 reconcile-logs/
+
+# One CSV per orphan scan.
+index-orphans-*.csv
+index-unbacked-*.csv
