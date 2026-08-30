@@ -98,6 +98,10 @@ The script:
 Afterwards update `.env` and the web part properties with the new service name,
 and once the first crawl finishes you can delete the old free service.
 
+`.env` is not in the repo — copy `.env.example` to `.env` and fill it in. The
+template holds only resource names and URLs (no keys), but `.env` is where a key
+would eventually be added, so it is ignored rather than tracked.
+
 Note: `attachment_names` exists in the schema so `hasattachment:` queries work,
 but the built-in indexer does not populate per-attachment names; filling it
 requires a small skillset (or the RegExAzFunc pattern) later.
