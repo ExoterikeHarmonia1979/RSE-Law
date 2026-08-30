@@ -271,6 +271,47 @@ if ($unbacked.Count) {
 
 $targets = if ($PurgeUnbacked) { $orphans } else { $redundant }
 Write-Host ("`n{0}: {1} documents would be removed" -f $(if ($Execute) { 'EXECUTING' } else { 'DRY RUN' }), $targets.Count)
+
+<#
+Save the message itself before deleting the row that points at it.
+
+For an unbacked orphan the blob is already gone, so the index document is the last trace of
+the message anywhere - and the indexer put the extracted body text into `content` along with
+the sender, recipients and date. Deleting the row without keeping that discards evidence that
+a message existed, which for a law firm's correspondence archive is not a reversible mistake.
+
+So the full document is written out first, as JSON, one file per run. Nothing is deleted
+until that file is on disk. Same reasoning as the manifest in delete-teams.ps1.
+#>
+if ($Execute -and $targets.Count) {
+  $manifest = Join-Path $sp "purged-documents-$stamp.json"
+  $saved = @()
+  foreach ($t in $targets) {
+    try {
+      $doc = Invoke-RestMethod -Method Get -Headers $SH `
+               -Uri "$searchUrl/docs('$([uri]::EscapeDataString($t.Key))')?api-version=$api"
+      $saved += [pscustomobject]@{
+        Blob        = $t.Blob
+        Key         = $t.Key
+        Subject     = "$($doc.metadata_subject)"
+        From        = "$($doc.metadata_message_from)"
+        To          = "$($doc.metadata_message_to)"
+        Cc          = "$($doc.metadata_message_cc)"
+        SentDate    = "$($doc.sent_date)"
+        Attachments = @($doc.attachment_names)
+        Content     = "$($doc.content)"
+      }
+    } catch {
+      Write-Warning "could not read $($t.Blob) before deleting: $($_.Exception.Message)"
+    }
+  }
+  if ($saved.Count -ne $targets.Count) {
+    throw "only captured $($saved.Count) of $($targets.Count) documents - refusing to delete what has not been saved"
+  }
+  $saved | ConvertTo-Json -Depth 6 | Set-Content $manifest -Encoding utf8
+  Write-Host "saved the full text of $($saved.Count) documents to $(Split-Path $manifest -Leaf) before deleting"
+}
+
 if (-not $Execute) { Write-Host "re-run with -Execute to apply."; return }
 
 # ── 4. delete ─────────────────────────────────────────────────────────────────
