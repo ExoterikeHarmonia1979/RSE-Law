@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# Refuse to commit client correspondence or credentials.
+#
+# WHY THIS EXISTS
+# ---------------
+# On 2026-08-30 a commit staged three files holding client data: purged-documents-*.json
+# (the full body text of six archived emails), messageid-index.tsv (258,974 RFC 5322
+# Message-IDs mapped to matter paths, i.e. who corresponded about which matter) and
+# older-mail-*.csv (subjects and message ids). It was caught before pushing.
+#
+# .gitignore was supposed to prevent it and did not, because a `git reset --hard` during a
+# branch split reverted .gitignore itself and took the patterns with it. Ignore rules are
+# tracked files: any operation that rewinds tracked files can silently remove the very rule
+# you are relying on, and `git add -A` then sweeps the files in.
+#
+# So this hook exists BECAUSE .gitignore is not a safety net. It reads the staged file list
+# directly and does not care what the ignore rules currently say.
+#
+# WHAT IT BLOCKS
+#   - archive/correspondence data extracts (message bodies, subjects, id maps, blob listings)
+#   - Logic App definition backups, which contain a hardcoded client secret verbatim
+#
+# BYPASS
+#   git commit --no-verify
+# Deliberately possible - a hook that cannot be bypassed gets disabled wholesale. But if you
+# are reaching for it on one of these paths, the answer is almost certainly no.
+
+blocked=""
+
+# Only ADDED/COPIED/MODIFIED/RENAMED paths; deletions are fine.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+for f in $staged; do
+  base=$(basename "$f")
+  case "$base" in
+    # --- client correspondence -------------------------------------------------
+    purged-documents-*.json)   blocked="$blocked\n  $f\n      full body text of archived messages" ;;
+    messageid-index.tsv)       blocked="$blocked\n  $f\n      Message-ID -> matter path map for the whole corpus" ;;
+    older-mail-*.csv)          blocked="$blocked\n  $f\n      message subjects and ids" ;;
+    missed-reconcile-*.csv)    blocked="$blocked\n  $f\n      message subjects and ids" ;;
+    index-orphans-*.csv|index-unbacked-*.csv)
+                               blocked="$blocked\n  $f\n      blob paths and subjects" ;;
+    archive-blobs.txt|archive-tails.txt|allblobs*.txt)
+                               blocked="$blocked\n  $f\n      full blob listing: every matter and subject line" ;;
+    deleted-teams-manifest-*.csv|teams-resolution-*.json)
+                               blocked="$blocked\n  $f\n      staff email addresses" ;;
+    # --- credentials -----------------------------------------------------------
+    *.backup-*.json)           blocked="$blocked\n  $f\n      Logic App definition backup - contains a client secret verbatim" ;;
+  esac
+done
+
+if [ -n "$blocked" ]; then
+  printf '\n\033[31mpre-commit: refusing to commit client data or credentials\033[0m\n'
+  printf "$blocked\n"
+  printf '\nThese are generated artefacts. They are rebuildable, and they contain material\n'
+  printf 'that must not leave this machine.\n\n'
+  printf 'Unstage them:\n'
+  printf '  git restore --staged <path>\n\n'
+  printf 'If .gitignore should have caught this, it was probably reverted by a reset -\n'
+  printf 'check infra/logicapps/tools/.gitignore still holds its patterns.\n\n'
+  exit 1
+fi
+
+exit 0
