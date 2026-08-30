@@ -284,7 +284,8 @@ for ($i = 0; $i -lt $todo.Count; $i += $ChunkSize) {
 }
 
 $sw.Stop()
-Write-Host "`n=== done in {0:N1} min ===" -f $sw.Elapsed.TotalMinutes
+# -f binds to -ForegroundColor on Write-Host; the format has to be applied first
+Write-Host ("`n=== done in {0:N1} min ===" -f $sw.Elapsed.TotalMinutes)
 Write-Host ("  {0,8}  Message-IDs recovered" -f $okTotal)
 Write-Host ("  {0,8}  genuinely had none" -f $noIdTotal)
 Write-Host ("  {0,8}  could not be read (recorded with status, NOT as absent)" -f $failTotal)
