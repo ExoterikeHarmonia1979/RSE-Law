@@ -1,0 +1,3 @@
+
+# Live workflow backups - these contain the hardcoded client secret verbatim.
+renew-subscriptions.backup-*.json

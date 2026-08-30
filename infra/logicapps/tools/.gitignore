@@ -12,3 +12,19 @@ reconcile-logs/
 # One CSV per orphan scan.
 index-orphans-*.csv
 index-unbacked-*.csv
+
+# CLIENT CORRESPONDENCE - none of the below may ever be committed.
+#
+# purged-documents-*.json holds the FULL BODY TEXT of messages whose index rows were
+# removed; it exists precisely because deleting those rows destroyed the last record of
+# them. messageid-index.tsv maps 258,974 RFC 5322 Message-IDs to matter paths, i.e. who
+# corresponded about which matter. older-mail-*.csv carries subjects and message ids.
+#
+# These were committed once, on 2026-08-30, because a `git reset --hard` during a PR split
+# silently reverted this file and took the patterns with it. Caught before pushing. If the
+# ignore rules ever look thinner than expected, suspect exactly that.
+purged-documents-*.json
+messageid-index.tsv
+older-mail-*.csv
+archive-items.txt
+tree.txt
