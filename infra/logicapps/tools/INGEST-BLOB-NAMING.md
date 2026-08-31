@@ -86,9 +86,60 @@ legibility; it is not a correctness gate.
 
 ## How the export runs
 
-Measured against the live tenant on 2026-08-31, not estimated.
+**The route is eDiscovery Content Search, not the Graph `exportItems` API.** The API
+measurements in the next subsection are kept because they were real and they explain why
+that path was attractive - but its payload cannot be read (see "Getting .eml out of the
+export"), so it is not the plan.
 
-### What the export API actually does
+### Verified on the live tenant, 2026-08-31
+
+A Content Search run as `SharePoint@rse-law.com` against `matters@rse-law.com`, scoped to
+`sent>=2024-01-01 AND sent<=2025-12-31` - a window that can only be satisfied from the
+In-Place Archive, since anything that old aged out of the primary mailbox months ago:
+
+```
+Status : Completed      Errors : (none)
+Items  : 344,686
+Size   : 164.9 GB       average item 502 KB
+```
+
+That is 81% of the archive's 425,840 items and 80% of its 205.8 GB, which is the expected
+shape and confirms the search really is reading archive content.
+
+Three things this settles that were previously open:
+
+- **Office 365 E3 (`ENTERPRISEPACK`) is sufficient.** Microsoft's export documentation
+  says "Microsoft 365 E3 or E5", which is a different SKU from the one this tenant holds.
+  That ambiguity is now resolved by evidence rather than by reading.
+- **The service account can sign in interactively**, which was not a given - service
+  accounts are frequently MFA-bound or sign-in blocked.
+- **The permissions work**: `SharePoint@rse-law.com` in the `eDiscovery Manager` role
+  group, which already carried the Export role.
+
+Two operational notes bought with real failures:
+
+- `Connect-IPPSSession` must run in **PowerShell 7**. The 5.1 / ISE build authenticates
+  through the WAM broker and dies with *"A window handle must be configured"*.
+- **`-EnableSearchOnlySession` is mandatory** from module v3.9.0. Without it
+  `Start-ComplianceSearch` fails at initialisation and the search still reports
+  `Status=Completed, Items=0` - indistinguishable from an empty archive unless you read
+  `Errors`. Never trust a zero without checking it.
+
+### Sizing the real run
+
+At the measured 502 KB average:
+
+| Scope | Items | Transferred |
+|---|---|---|
+| File Cabinet only | 310,190 | ~148 GB |
+| Everything incl. Inbox and Deleted Items | 425,840 | ~204 GB |
+
+Purview caps a PST at 10 GB and a zip package at 40 GB, so even the smaller scope is at
+least 4 zip packages and ~15 PSTs. Combined with the hard limits - export packages expire
+after **14 days**, and an export running more than **7 days** is cancelled automatically -
+the run has to be split into batches by date range regardless of which scope is chosen.
+
+### What the Graph exportItems API does (measured, but not the route taken)
 
 | | |
 |---|---|
