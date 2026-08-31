@@ -568,6 +568,25 @@ $odata.For_each_Recipient.runtimeConfiguration = @{ concurrency = @{ repetitions
 $odata.For_each_CC.runtimeConfiguration        = @{ concurrency = @{ repetitions = 1 } }
 $odata.If_Has_Attachments.actions.For_each_Attachment.runtimeConfiguration = @{ concurrency = @{ repetitions = 1 } }
 
+# ------------------- 4b. an unreadable attachment list must not lose the email
+# Graph answers /attachments with ErrorItemNotFound for some items ("The specified object
+# was not found in the store"). The HTTP action fails, but Get_Attachment_JSON still
+# *succeeds* - it happily parses the error body, because 'value' is not required by its
+# schema - so the run reaches the Foreach with body(...)?['value'] evaluating to null.
+#
+# A Foreach over null throws ExpressionEvaluationFailed. The run fails, the message is
+# abandoned and redelivered, and after 10 attempts Service Bus dead-letters it, so the
+# email is never archived at all - body and attachments alike. Losing the whole record
+# because one part of it was unreadable is the worst outcome available.
+#
+# coalesce to an empty array: there is then nothing to iterate, arrAttachments stays empty,
+# and Create_blob_1 still files the message itself. Note the trade-off - this turns a loud
+# total loss into a quiet partial one, so the message archives with its attachments
+# missing and nothing in the blob says so. Detecting that needs a reconcile pass comparing
+# hasAttachments against the attachment blobs; it is deliberately not smuggled in here.
+$odata.If_Has_Attachments.actions.For_each_Attachment['foreach'] =
+  "@coalesce(body('Get_Attachment_JSON')?['value'], createArray())"
+
 # ---------------------------------------- 5. Graph calls -> managed identity
 $mi = @{ type = 'ManagedServiceIdentity'; audience = 'https://graph.microsoft.com' }
 function Use-MI($a) { if ($a) { $a.inputs.Remove('headers') | Out-Null; $a.inputs.authentication = $mi } }

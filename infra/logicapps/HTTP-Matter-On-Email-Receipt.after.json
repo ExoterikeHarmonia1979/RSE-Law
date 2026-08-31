@@ -353,7 +353,7 @@
                           "type": "Http"
                         }
                       },
-                      "foreach": "@body('Get_Attachment_JSON')?['value']",
+                      "foreach": "@coalesce(body('Get_Attachment_JSON')?['value'], createArray())",
                       "runAfter": {
                         "Get_Attachment_JSON": [
                           "Succeeded",
