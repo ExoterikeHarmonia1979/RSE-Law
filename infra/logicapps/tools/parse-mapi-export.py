@@ -30,6 +30,10 @@ PT_STRING8 = 0x001E
 PT_UNICODE = 0x001F
 PT_BINARY  = 0x0102
 PT_SYSTIME = 0x0040
+PT_LONG    = 0x0003
+
+# Variable-width values are preceded by a 4-byte byte-count; fixed-width ones are not.
+FIXED_WIDTH = {PT_SYSTIME: 8, PT_LONG: 4}
 
 PROPS = {
     'transportHeaders': (0x007D, (PT_UNICODE, PT_STRING8)),
@@ -76,16 +80,30 @@ def read_property(buf, prop_id, prop_types):
                 break
             start = i + 4
             off = i + 4
+
+            # Fixed-width types carry their value immediately after the tag with NO
+            # byte-count. Demanding a length prefix here is why the submit time read as
+            # absent for every item that had no header block to fall back on.
+            if prop_type in FIXED_WIDTH:
+                width = FIXED_WIDTH[prop_type]
+                if off + width > len(buf):
+                    continue
+                raw = buf[off: off + width]
+                if prop_type == PT_SYSTIME:
+                    ft = struct.unpack('<Q', raw)[0]
+                    # reject implausible clocks rather than emit a garbage timestamp:
+                    # roughly 1990..2100 in FILETIME ticks
+                    if 118000000000000000 < ft < 158000000000000000:
+                        return ft
+                    continue
+                return struct.unpack('<i', raw)[0]
+
             if off + 4 > len(buf):
                 continue
             n = struct.unpack_from('<I', buf, off)[0]
             if n == 0 or n > MAX_VALUE or off + 4 + n > len(buf):
                 continue
             raw = buf[off + 4: off + 4 + n]
-            if prop_type == PT_SYSTIME:
-                if n != 8:
-                    continue
-                return struct.unpack('<Q', raw)[0]
             val = _decode(raw, prop_type)
             if val:
                 return val
