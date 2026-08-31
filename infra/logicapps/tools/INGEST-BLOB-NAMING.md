@@ -146,13 +146,53 @@ network, and the ACI sizing follows from that. Benchmark it once a converter is 
 **121 GB is the exported size, not the stored size.** Converted MIME plus attachments
 written as their own blobs will differ.
 
+## Getting .eml out of the export
+
+The route changed after the Graph `exportItems` payload turned out to be an MS-OXCFXICS
+FastTransfer stream rather than MIME, and no tool could read it: Redemption is the only
+library claiming FTS support and it fails on Graph's streams for 20 of 20 items, always on
+the same construct (`Unexpected property type 0x33094040`, immediately after the named
+property `ItemProcessorSuccess`). Its own FTS round-trips fine, so this is a Graph-vs-
+Redemption incompatibility, reported upstream.
+
+**The ingest therefore takes the eDiscovery Content Search route, which delivers PSTs.**
+
+`pst-to-eml.ps1` does the extraction, using Redemption's `LogonPstStore` and `olRFC822`.
+Not `readpst`: libpst has no official Windows build, and pypff/libratom ship no Windows
+wheels, so pip tries to compile and fails on a box with no compiler and no elevation.
+Redemption reads the PST through Outlook's own MAPI, so fidelity is native.
+
+Verified end to end before any export existed, by pushing six real messages from the blob
+container into a PST and pulling them back out:
+
+```
+Message-ID and sent date survived : 6 of 6
+ingest-key.py tokens identical    : 6 of 6
+timezone normalised correctly     : 10:33:58 -0700 -> 2026-05-04T17:33:58Z
+```
+
+So dedup and naming behave identically on export output and on existing archive content.
+
+Two things to keep in view:
+
+- **The MIME is regenerated, not copied.** 238,160 bytes in, 234,001 out on one sample.
+  Content is equivalent, bytes are not. The live Logic App already stores
+  Graph-generated MIME rather than a bit-exact original, so this is not a new property of
+  the archive - but it should be stated rather than assumed.
+- **Folder structure carries the matter.** A message's matter comes from the folder it
+  sits in; that is the rule `sweep-older-mail.ps1` and `reconcile-missed.ps1` already use,
+  and the only classification a person actually made. `pst-to-eml.ps1` mirrors the PST
+  folder path into its output. Export the PST from Purview with **"Include folder and
+  path of the source"** selected, or that information is destroyed before we see it.
+
+Redemption is commercial and licensed per developer. It is now load-bearing for the
+ingest rather than a discarded experiment, so the licence needs to be real before a
+production run.
+
 ## Still open, and not decided here
 
-- The export payload is an MS-OXCFXICS FastTransfer stream, **not MIME**. It cannot be
-  written to `*.eml` as-is; the ingest needs a MAPI->MIME conversion step, or a deliberate
-  decision to store a second format and teach both indexes about it.
-- Attachments are embedded in that stream (confirmed present in 29 of 30 sampled items).
-  They must be split back out to satisfy the `Attachments/<token>/` layout the search
-  skillset depends on.
+- Attachments arrive inline in the extracted `.eml`. The existing archive also writes each
+  attachment as its own blob under `Attachments/<token>/`, which the search skillset
+  depends on, so the ingest still needs a step that splits them back out.
 - Ingest scope: ~310,000 File Cabinet items, or 425,840 including the archive's Inbox and
   Deleted Items.
