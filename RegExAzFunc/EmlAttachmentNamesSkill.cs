@@ -85,6 +85,98 @@ public class EmlAttachmentNamesSkill
         return new OkObjectResult(new { values = results });
     }
 
+    static EmlAttachmentNamesSkill()
+    {
+        // .msg carries a MAPI code page - Windows-1252 and friends - and .NET Core
+        // dropped the legacy code page tables from the base library. Without this,
+        // MsgReader throws "No data is available for encoding 1252" the moment it reads
+        // an attachment.
+        //
+        // Registered here rather than in Program.cs so the skill cannot be deployed
+        // without it. The failure mode is nasty: the exception is caught below and
+        // logged as a warning, so every ingested message would come back with blank
+        // attachment_names and sent_date - looking like an unsupported format rather
+        // than a missing encoding provider, and only at index time, never at build.
+        System.Text.Encoding.RegisterProvider(
+            System.Text.CodePagesEncodingProvider.Instance);
+    }
+
+    // An OLE compound file starts with this. .msg is one; .eml never is.
+    private static readonly byte[] CfbMagic =
+        { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
+
+    private static bool LooksLikeMsg(byte[] bytes)
+    {
+        if (bytes.Length < CfbMagic.Length) return false;
+        for (int i = 0; i < CfbMagic.Length; i++)
+        {
+            if (bytes[i] != CfbMagic[i]) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Outlook .msg, which is what the archive ingest writes: Purview's eDiscovery export
+    /// produces .msg directly, and Azure AI Search indexes it natively. Without this the
+    /// two fields this skill exists to populate would simply be blank for every ingested
+    /// message, which looks like missing data rather than an unhandled format.
+    /// </summary>
+    private (List<string> Names, string? SentDate) ParseMsg(byte[] bytes, string recordId)
+    {
+        var names = new List<string>();
+        string? sentDate = null;
+
+        using var stream = new MemoryStream(bytes);
+        using var msg = new MsgReader.Outlook.Storage.Message(stream);
+
+        // Prefer the transport headers, for the same reason ingest-key.py does: they are
+        // the message's own record of itself, and reading them keeps .msg and .eml
+        // agreeing on sent_date instead of drifting apart by a timezone or a property.
+        var raw = msg.TransportMessageHeaders;
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                var parsed = MimeMessage.Load(
+                    new MemoryStream(System.Text.Encoding.UTF8.GetBytes(raw + "\r\n\r\n")));
+                if (parsed.Date != DateTimeOffset.MinValue)
+                {
+                    sentDate = parsed.Date.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Header parse failed for {RecordId}, falling back", recordId);
+            }
+        }
+
+        // Internal Outlook-to-Outlook mail never traversed SMTP and carries no transport
+        // headers at all - roughly a quarter of this archive - so fall back to the MAPI
+        // submit time rather than reporting no date.
+        if (sentDate is null && msg.SentOn.HasValue)
+        {
+            sentDate = msg.SentOn.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        }
+
+        foreach (var attachment in msg.Attachments)
+        {
+            string? name = attachment switch
+            {
+                // Inline images (signature logos) are excluded to match the .eml branch,
+                // which counts only Content-Disposition: attachment.
+                MsgReader.Outlook.Storage.Attachment a => a.IsInline ? null : a.FileName,
+                MsgReader.Outlook.Storage.Message embedded => embedded.FileName,
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(name) && !names.Contains(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        return (names, sentDate);
+    }
+
     private (List<string> Names, string? SentDate) ParseMessage(SkillRecord record)
     {
         var names = new List<string>();
@@ -97,7 +189,16 @@ public class EmlAttachmentNamesSkill
 
         try
         {
-            using var stream = new MemoryStream(Convert.FromBase64String(base64));
+            var bytes = Convert.FromBase64String(base64);
+
+            // Dispatch on content, not on a file name - the skill only ever receives
+            // bytes, and the blob extension is not in the payload.
+            if (LooksLikeMsg(bytes))
+            {
+                return ParseMsg(bytes, record.RecordId);
+            }
+
+            using var stream = new MemoryStream(bytes);
             var message = MimeMessage.Load(stream);
 
             // The Date: header is the true sent time — unlike the indexer's
@@ -123,8 +224,9 @@ public class EmlAttachmentNamesSkill
         }
         catch (Exception ex)
         {
-            // Non-MIME input (.msg, corrupt file): return no data rather than
-            // failing the whole indexer batch for one bad document.
+            // Corrupt or unrecognised input: return no data rather than failing the whole
+            // indexer batch for one bad document. (.msg used to land here too, which is
+            // why ingested mail would have had blank attachment_names and sent_date.)
             _logger.LogWarning(ex, "Could not parse message for record {RecordId}", record.RecordId);
         }
 
