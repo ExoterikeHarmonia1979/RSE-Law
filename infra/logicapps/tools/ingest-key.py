@@ -6,10 +6,20 @@ Implements the scheme recorded in INGEST-BLOB-NAMING.md:
     token = 'k' + first 22 hex chars
     name  = <subject capped 150> [<token>].eml
 
-The eDiscovery export route delivers PSTs, which readpst/libpff turn into ordinary RFC
-5322 .eml files - so identity comes from real headers here, not from MAPI properties.
+Handles both formats the eDiscovery export can produce:
+
+  .msg  - Purview's "Create .msg files for messages" option. PREFERRED: it needs no PST
+          cracking, so no Outlook, no MAPI and no commercial library. Azure AI Search
+          already indexes .msg natively (see indexer.json), and extract_msg is pure
+          Python. Read via the transport header block, falling back to MAPI properties
+          for internal mail that never traversed SMTP and so has no headers.
+  .eml  - what you get if the export is taken as PSTs and cracked afterwards.
+
+Verified the two agree: six real messages produced byte-identical tokens through both
+routes. Only the source differs.
+
 (parse-mapi-export.py covers the Graph exportItems route, which returns MAPI
-FastTransfer instead. Both produce the same key; only the source differs.)
+FastTransfer instead. Same key again.)
 
 Message-ID alone is NOT a safe key: 3,835 groups of genuinely different messages in this
 corpus share one, because Outlook reuses the header across separately composed mail. The
@@ -20,6 +30,7 @@ Usage
     python ingest-key.py check <file.eml> ...
 """
 import csv
+import datetime
 import email
 import email.utils
 import hashlib
@@ -78,7 +89,59 @@ def dedup_key(mid, sent):
     return 'k' + h[:22]
 
 
+def describe_msg(path):
+    """Identity from an Outlook .msg, which is what Purview exports when you pick
+    "Create .msg files for messages" instead of PSTs.
+
+    Prefer the transport header block: it is the message's own record of itself, and it
+    is what the .eml path reads, so both routes produce the same key. Fall back to the
+    MAPI properties for internal Outlook-to-Outlook mail, which never traversed SMTP and
+    so carries no headers at all - about a quarter of this archive.
+
+    Note the subject is taken from the headers where possible. The MAPI subject property
+    can be rewritten by tooling in transit (an unlicensed Redemption prefixes it with
+    "[UNREGISTERED]", for instance); the header copy is untouched.
+    """
+    import extract_msg
+
+    m = extract_msg.Message(path)
+    try:
+        hdrs = m.header
+        mid = sent = subj = None
+        if hdrs is not None:
+            raw_mid = hdrs.get('Message-ID')
+            if raw_mid:
+                mid = raw_mid.strip().strip('<>').strip()
+            sent = sent_utc(hdrs)
+            subj = hdrs.get('Subject')
+
+        if not mid:
+            mid = (m.messageId or '').strip().strip('<>').strip() or None
+        if not sent:
+            dt = m.date
+            if isinstance(dt, datetime.datetime):
+                d = dt.astimezone(datetime.timezone.utc) if dt.tzinfo else dt
+                sent = d.strftime('%Y-%m-%dT%H:%M:%SZ')
+        if not subj:
+            subj = m.subject
+    finally:
+        m.close()
+
+    token = dedup_key(mid, sent)
+    return {
+        'path': path,
+        'messageId': mid,
+        'sentUtc': sent,
+        'subject': subj,
+        'token': token,
+        'blobName': f'{clean_stem(subj)} [{token}].msg' if token else None,
+    }
+
+
 def describe(path):
+    """Route by extension. Both formats yield the same key for the same message."""
+    if path.lower().endswith('.msg'):
+        return describe_msg(path)
     with open(path, 'rb') as f:
         msg = email.message_from_binary_file(f, policy=policy.default)
     mid = message_id(msg)
@@ -139,9 +202,9 @@ def main():
         files = []
         for root, _dirs, names in os.walk(src):
             for n in names:
-                if n.lower().endswith('.eml'):
+                if n.lower().endswith(('.eml', '.msg')):
                     files.append(os.path.join(root, n))
-        print(f'source: {len(files):,} .eml files under {src}')
+        print(f'source: {len(files):,} message files (.eml/.msg) under {src}')
 
         keyed = unkeyed = already = fresh = 0
         by_token = {}
