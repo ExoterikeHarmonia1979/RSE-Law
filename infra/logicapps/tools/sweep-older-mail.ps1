@@ -30,6 +30,15 @@ Dry run unless -Execute.
 param(
   [string]$Mailbox = 'matters@rse-law.com',
   [string]$Before  = '2026-02-01',
+  <#
+  Optional lower bound, making the range a window rather than "everything older than".
+
+  Added for the matters@ gap: that mailbox was excluded from the subscription roster by
+  design (shared mailboxes are carved out), so nothing was archived from it between
+  2026-08-20 and the roster change on 2026-08-30. Recovering that needs
+  -After 2026-08-19 -Before 2026-08-31, which the original one-sided filter could not say.
+  #>
+  [string]$After   = '',
   [int]$BatchSize  = 50,
   [int]$Max        = 20000,
   [switch]$RefreshBlobs,
@@ -108,7 +117,9 @@ $folderCache = @{}
 $seen = 0; $already = 0; $skipped = 0; $queued = 0; $errors = 0
 $batch = @(); $report = @(); $byMatter = @{}
 
-$u = "https://graph.microsoft.com/v1.0/users/$uid/messages?`$filter=receivedDateTime lt ${Before}T00:00:00Z" +
+$filter = "receivedDateTime lt ${Before}T00:00:00Z"
+if ($After) { $filter = "receivedDateTime ge ${After}T00:00:00Z and $filter" }
+$u = "https://graph.microsoft.com/v1.0/users/$uid/messages?`$filter=$([uri]::EscapeDataString($filter))" +
      "&`$select=id,subject,receivedDateTime,parentFolderId&`$top=200"
 while ($u -and $queued -lt $Max) {
   $page = $null
@@ -186,7 +197,7 @@ if ($Execute -and $batch.Count) {
   try { Send-Batch $batch } catch { Write-Warning $_.Exception.Message; $errors++ }
 }
 
-Write-Host "`n=== mail received before $Before ==="
+Write-Host ("`n=== mail received {0} ===" -f $(if ($After) { "between $After and $Before" } else { "before $Before" }))
 Write-Host ("  {0,6}  seen in the mailbox" -f $seen)
 Write-Host ("  {0,6}  already archived" -f $already)
 Write-Host ("  {0,6}  in bins/drafts, skipped by design" -f $skipped)
