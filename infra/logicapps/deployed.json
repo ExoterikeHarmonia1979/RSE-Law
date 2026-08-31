@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-08-22T04:42:34.8612875Z",
+  "capturedUtc": "2026-08-31T04:35:45.7215410Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -347,7 +347,7 @@
               "If_Has_Attachments": {
                 "actions": {
                   "For_each_Attachment": {
-                    "foreach": "@body('Get_Attachment_JSON')?['value']",
+                    "foreach": "@coalesce(body('Get_Attachment_JSON')?['value'], createArray())",
                     "actions": {
                       "Append_to_arrAttachments": {
                         "runAfter": {

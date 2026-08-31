@@ -12,3 +12,11 @@ reconcile-logs/
 # One CSV per orphan scan.
 index-orphans-*.csv
 index-unbacked-*.csv
+
+# Full message text of purged index rows - correspondence, never committed.
+purged-documents-*.json
+
+# Message-ID index: ~255k rows derived from blob headers, rebuildable, and it maps
+# message identifiers to matter paths - not something to commit.
+messageid-index.tsv
+older-mail-*.csv
