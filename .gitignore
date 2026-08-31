@@ -1,0 +1,19 @@
+# Redemption is a commercial COM library, licensed per-developer and not ours to
+# redistribute. The DLLs are ~26 MB and are a build/runtime dependency, not source.
+# Keep the archive and any extraction out of the repo; record the version in the docs
+# that depend on it instead.
+Redemption.zip
+Redemption*.dll
+Interop.Redemption.dll
+.local/
+
+# graphify writes graphify-out/ wherever it is invoked. Derived entirely from tracked
+# source and regenerated on demand. Bare directory name so it matches at any depth.
+graphify-out/
+
+__pycache__/
+*.pyc
+
+# Peeked Service Bus messages, saved before touching the queue. These carry live Graph
+# resource ids and subscription ids for real mail - operational scratch, not source.
+infra/logicapps/tools/dlq-preserved/
