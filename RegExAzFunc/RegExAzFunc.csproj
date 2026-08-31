@@ -22,7 +22,6 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
     <PackageReference Include="MimeKit" Version="4.9.0" />
     <PackageReference Include="MsgReader" Version="6.1.0" />
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.11" />
   </ItemGroup>
 
 </Project>
