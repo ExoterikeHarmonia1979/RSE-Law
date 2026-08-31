@@ -115,10 +115,26 @@ foreach ($e in $emls) {
   if (-not $token -or $token -eq 'None') { $nokey++; continue }
   if ($done.ContainsKey($token)) { $skipped++; continue }
 
-  $leaf   = Split-Path (Split-Path $e.FullName -Parent) -Leaf
+  $parent = Split-Path $e.FullName -Parent
+  $leaf   = Split-Path $parent -Leaf
   $matter = Get-MatterHint $leaf
   if (-not $matter) { $matter = 'UnsortedMatterCommunication' }
-  $blob = "$matter/Emails/$name"
+
+  # Deleted mail must not masquerade as filed correspondence.
+  #
+  # 16 of the 17 subfolders under the archive's Deleted Items are named as file numbers
+  # (02.353, 06.162, 100.072, 109.029 ...), so the matter rule above resolves them to a
+  # real matter and would drop deleted mail straight into <matter>/Emails/ - visually
+  # identical to correspondence someone chose to file. For a legal archive that is the
+  # wrong default: it is not a filing, it is something a person deleted.
+  #
+  # Same folder, different container. Still ingested, still searchable, still attributed
+  # to its matter - but the path says where it came from, and nothing has to be trusted
+  # to remember. 1,657 items sit under Deleted Items today.
+  $rel = $parent.Substring($emlRoot.Length).TrimStart('\','/')
+  $fromBin = ($rel -split '[\\/]') -contains 'Deleted Items'
+  $section = if ($fromBin) { 'DeletedItems' } else { 'Emails' }
+  $blob = "$matter/$section/$name"
 
   if (-not $Execute) {
     if ($sent -lt 10) { Write-Host "  would upload -> $blob" }
