@@ -43,16 +43,24 @@ from email import policy
 # Matches the sanitising the Logic App already applies to blob stems, so ingested names
 # sit alongside the existing ones instead of introducing a second convention.
 BAD = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+# Control characters, NUL included. MAPI subjects carry them: a real message in the June
+# 2024 batch had a NUL mid-subject, which survived into the blob name, encoded to %00 and
+# made Azure reject the whole URL with "400 Invalid URL". \s does not match NUL, so
+# stripping whitespace alone does not catch it.
+CTRL = re.compile(r'[\x00-\x1f\x7f]+')
 WS = re.compile(r'\s+')
 SUBJECT_CAP = 150
 
 
 def clean_stem(subject):
-    s = BAD.sub('_', subject or '')
+    s = CTRL.sub(' ', subject or '')
+    s = BAD.sub('_', s)
     s = WS.sub(' ', s).strip()
     if not s:
         s = '(no subject)'
-    return s[:SUBJECT_CAP].strip()
+    # Trailing dots and spaces are legal in a blob name but a persistent source of
+    # trouble in tooling that mirrors blobs to a filesystem, so drop them.
+    return s[:SUBJECT_CAP].strip().rstrip('. ')
 
 
 def sent_utc(msg):
@@ -72,14 +80,23 @@ def sent_utc(msg):
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def message_id(msg):
-    mid = msg.get('Message-ID') or msg.get('Message-Id')
-    if not mid:
+def clean_mid(raw):
+    """Normalise a Message-ID to its bare form.
+
+    Control characters have to go FIRST. A real message in the June 2024 batch carried a
+    NUL immediately after the closing '>', so stripping '<>' could not reach the '>' and
+    the id kept it - which would key that message differently from the same message read
+    as .eml, and break dedup without any visible error.
+    """
+    if not raw:
         return None
-    mid = mid.strip()
-    if mid.startswith('<') and mid.endswith('>'):
-        mid = mid[1:-1]
-    return mid.strip() or None
+    mid = CTRL.sub('', str(raw)).strip()
+    mid = mid.strip('<>').strip()
+    return mid or None
+
+
+def message_id(msg):
+    return clean_mid(msg.get('Message-ID') or msg.get('Message-Id'))
 
 
 def dedup_key(mid, sent):
@@ -110,14 +127,12 @@ def describe_msg(path):
         hdrs = m.header
         mid = sent = subj = None
         if hdrs is not None:
-            raw_mid = hdrs.get('Message-ID')
-            if raw_mid:
-                mid = raw_mid.strip().strip('<>').strip()
+            mid = clean_mid(hdrs.get('Message-ID'))
             sent = sent_utc(hdrs)
             subj = hdrs.get('Subject')
 
         if not mid:
-            mid = (m.messageId or '').strip().strip('<>').strip() or None
+            mid = clean_mid(m.messageId)
         if not sent:
             dt = m.date
             if isinstance(dt, datetime.datetime):

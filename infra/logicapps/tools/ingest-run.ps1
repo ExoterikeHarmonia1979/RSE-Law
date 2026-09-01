@@ -151,6 +151,13 @@ Write-Host "`nscoring against the index (nothing is written yet)"
 foreach ($r in $roots) { & $py (Join-Path $PSScriptRoot 'ingest-key.py') plan $r --index $IndexPath }
 
 # ---------------------------------------------------------------- 4. upload
+$blobToken = ''
+$tokenAt = (Get-Date).AddYears(-1)
+if ($Execute) {
+  $blobToken = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
+  $tokenAt = Get-Date
+  if (-not $blobToken) { throw "could not get a storage token - run 'az login' first" }
+}
 $sent = 0; $skipped = 0; $nokey = 0; $errors = 0
 $newIndexRows = New-Object System.Collections.Generic.List[string]
 
@@ -212,9 +219,23 @@ foreach ($e in $emls) {
   }
 
   try {
-    & $az storage blob upload --account-name $Account --container-name $Container `
-        --name $blob --file $e.FullName --overwrite --auth-mode login --only-show-errors 1>$null 2>$null
-    if ($LASTEXITCODE -ne 0) { throw "az exit $LASTEXITCODE" }
+    # REST, not `az storage blob upload`. az.cmd is a batch wrapper: blob names carrying
+    # spaces and brackets break its argument parsing so badly that it never sees --file
+    # or --auth-mode, and reports "please specify one of --file and --data" instead. It
+    # also spawned a process per blob, which is its own cost across 425,840 uploads.
+    if (((Get-Date) - $tokenAt).TotalMinutes -gt 40) {
+      $blobToken = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
+      $tokenAt = Get-Date
+    }
+    # Encode each path segment separately: %2F would escape the slashes that make the
+    # virtual directories the archive is organised by.
+    $encoded = ($blob -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+    $uri = "https://$Account.blob.core.windows.net/$Container/$encoded"
+    Invoke-WebRequest -Method Put -Uri $uri -InFile $e.FullName -Headers @{
+      Authorization      = "Bearer $blobToken"
+      'x-ms-version'     = '2021-12-02'
+      'x-ms-blob-type'   = 'BlockBlob'
+    } -ContentType 'application/octet-stream' -ErrorAction Stop | Out-Null
     Add-Content -Path $checkpoint -Value $token
     $newIndexRows.Add("$blob`t$mid`tok")
     $sent++
