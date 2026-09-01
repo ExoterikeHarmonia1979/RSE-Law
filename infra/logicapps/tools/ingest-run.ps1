@@ -42,6 +42,9 @@ param(
   [string]$Container   = 'matters',
   [string]$IndexPath   = (Join-Path $PSScriptRoot 'messageid-index.tsv'),
   [int]$Limit          = 0,
+  # 12 keeps the uplink busy without provoking storage throttling. Sequential managed
+  # 109/min; the network can carry several times that.
+  [int]$Parallel       = 12,
   [switch]$Execute
 )
 $ErrorActionPreference = 'Stop'
@@ -159,6 +162,13 @@ function Get-BlobToken {
   $script:blobTokenExp = if ($j.expiresOn) { [datetime]::Parse($j.expiresOn) } else { (Get-Date).AddMinutes(50) }
 }
 if ($Execute) { Get-BlobToken; Write-Host ("storage token valid until {0:HH:mm}" -f $script:blobTokenExp) }
+
+# One HttpClient for the whole run. It is thread-safe and pools connections, which is the
+# entire point - a client per request would reintroduce the handshake cost being removed.
+$handler = [Net.Http.SocketsHttpHandler]::new()
+$handler.MaxConnectionsPerServer = 64
+$httpClient = [Net.Http.HttpClient]::new($handler)
+$httpClient.Timeout = [TimeSpan]::FromMinutes(10)
 $sent = 0; $skipped = 0; $nokey = 0; $errors = 0
 $newIndexRows = New-Object System.Collections.Generic.List[string]
 
@@ -207,8 +217,12 @@ Write-Host ("  not seen before                   : {0,7:N0}" -f $fresh)
 Write-Host ("  identical keys within this batch  : {0,7:N0}  (same message twice - they overwrite)" -f $dupes)
 Write-Host ""
 
+# Work out every blob path first, then upload. Deciding the destination is pure string
+# work and costs nothing; keeping it out of the parallel block keeps the matter rules in
+# one place and single-threaded, where they are easy to reason about.
+$uploads = New-Object System.Collections.Generic.List[object]
 foreach ($e in $emls) {
-  if ($Limit -gt 0 -and $sent -ge $Limit) { break }
+  if ($Limit -gt 0 -and $uploads.Count -ge $Limit) { break }
 
   $k = $keyed[$e.FullName]
   if (-not $k) { $nokey++; continue }
@@ -234,63 +248,95 @@ foreach ($e in $emls) {
   # to remember. 1,657 items sit under Deleted Items today.
   # .eml sits under $emlRoot (extracted from a PST); .msg sits under $Work where it was
   # unpacked. Measure the relative path from whichever root actually contains this file.
-  $root = if ($parent.StartsWith($emlRoot, [StringComparison]::OrdinalIgnoreCase)) { $emlRoot } else { $Work }
-  $rel = $parent.Substring($root.Length).TrimStart('\','/')
+  # A message can sit under $emlRoot (extracted from a PST), under $Work (a package this
+  # run unpacked) or under $Source (a download already unpacked by hand). Pick the longest
+  # matching root, so $emlRoot wins over the $Work that contains it. Assuming $Work threw
+  # "startIndex cannot be larger than length of string" the moment a file lived elsewhere.
+  $root = @($emlRoot) + $roots |
+            Where-Object { $_ -and $parent.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) } |
+            Sort-Object -Property Length -Descending | Select-Object -First 1
+  $rel = if ($root) { $parent.Substring($root.Length).TrimStart('\','/') } else { $parent }
   # 'Deleted Items' in the mailbox; 'Deleted-Items' once the export has sanitised it.
   $segs = $rel -split '[\\/]'
   $fromBin = ($segs -contains 'Deleted Items') -or ($segs -contains 'Deleted-Items')
   $section = if ($fromBin) { 'DeletedItems' } else { 'Emails' }
   $blob = "$matter/$section/$name"
 
-  if (-not $Execute) {
-    if ($sent -lt 10) { Write-Host "  would upload -> $blob" }
-    $sent++
-    continue
-  }
+  # Encode each path segment separately: %2F would escape the slashes that make the
+  # virtual directories the archive is organised by.
+  $encoded = ($blob -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+  $uploads.Add([pscustomobject]@{
+    File  = $e.FullName
+    Blob  = $blob
+    Uri   = "https://$Account.blob.core.windows.net/$Container/$encoded"
+    Token = $token
+    Mid   = $mid
+  })
+}
 
-  try {
-    # REST, not `az storage blob upload`. az.cmd is a batch wrapper: blob names carrying
-    # spaces and brackets break its argument parsing so badly that it never sees --file
-    # or --auth-mode, and reports "please specify one of --file and --data" instead. It
-    # also spawned a process per blob, which is its own cost across 425,840 uploads.
-    # five minutes of headroom, so a long upload cannot straddle the expiry
+if (-not $Execute) {
+  foreach ($u in ($uploads | Select-Object -First 10)) { Write-Host "  would upload -> $($u.Blob)" }
+  $sent = $uploads.Count
+} else {
+  # Upload in parallel, in chunks.
+  #
+  # Sequentially this managed 109 uploads/min - 0.79 MB/s against an uplink measured at
+  # 2.6 MB/s. The network was never the limit: each upload was a separate request with its
+  # own TLS handshake, and at a 444 KB average that setup cost dominated. The full archive
+  # would have taken about 65 hours.
+  #
+  # Chunking rather than one big parallel pass is deliberate. It gives a natural point to
+  # refresh the token and to write the checkpoint and index rows from a single thread,
+  # which keeps both files consistent without locking. A crash loses at most one chunk of
+  # progress, and re-running skips whatever was already recorded.
+  $chunkSize = [Math]::Max($Parallel * 8, 200)
+  $total = $uploads.Count
+  Write-Host "uploading $total in chunks of $chunkSize, $Parallel at a time"
+  $swAll = [Diagnostics.Stopwatch]::StartNew()
+
+  for ($off = 0; $off -lt $total; $off += $chunkSize) {
     if ((Get-Date) -gt $script:blobTokenExp.AddMinutes(-5)) { Get-BlobToken }
-    # Encode each path segment separately: %2F would escape the slashes that make the
-    # virtual directories the archive is organised by.
-    $encoded = ($blob -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
-    $uri = "https://$Account.blob.core.windows.net/$Container/$encoded"
-    # -InFile takes a WILDCARD path, not a literal one, and there is no -LiteralFile. Mail
-    # subjects routinely contain brackets - "RE[2] Deposition of Dr. Valdez" - and [2] is a
-    # character class, so PowerShell looks for a file whose name has a literal '2' there
-    # and reports "cannot be resolved to a file". Escaping turns them back into characters.
-    $literal = [System.Management.Automation.WildcardPattern]::Escape($e.FullName)
+    $chunk = $uploads[$off..([Math]::Min($off + $chunkSize, $total) - 1)]
+    $tok = $script:blobToken
 
-    # Belt and braces on top of the proactive refresh: a 401 means the token went stale
-    # despite the arithmetic, so fetch a new one and retry once rather than losing the
-    # message to a transient auth failure. Anything else is a real error and rethrows.
-    $attempt = 0
-    while ($true) {
-      $attempt++
-      $resp = Invoke-WebRequest -Method Put -Uri $uri -InFile $literal -Headers @{
-        Authorization      = "Bearer $($script:blobToken)"
-        'x-ms-version'     = '2021-12-02'
-        'x-ms-blob-type'   = 'BlockBlob'
-      } -ContentType 'application/octet-stream' -SkipHttpErrorCheck
-      if ($resp.StatusCode -eq 201) { break }
-      if ($resp.StatusCode -eq 401 -and $attempt -eq 1) {
-        Write-Host "  token rejected - refreshing and retrying"
-        Get-BlobToken
-        continue
+    $results = $chunk | ForEach-Object -ThrottleLimit $Parallel -Parallel {
+      $item = $_
+      try {
+        # HttpClient rather than Invoke-WebRequest: it pools connections, so the TLS
+        # handshake is paid once per thread instead of once per message.
+        $client = $using:httpClient
+        $fs = [IO.File]::OpenRead($item.File)
+        try {
+          $req = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Put, $item.Uri)
+          $req.Content = [Net.Http.StreamContent]::new($fs)
+          $req.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/octet-stream')
+          $req.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $using:tok)
+          $req.Headers.Add('x-ms-version', '2021-12-02')
+          $req.Headers.Add('x-ms-blob-type', 'BlockBlob')
+          $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+          [pscustomobject]@{ Ok = $resp.IsSuccessStatusCode; Code = [int]$resp.StatusCode
+                             Blob = $item.Blob; Token = $item.Token; Mid = $item.Mid }
+        } finally { $fs.Dispose() }
+      } catch {
+        [pscustomobject]@{ Ok = $false; Code = -1; Blob = $item.Blob
+                           Token = $item.Token; Mid = $item.Mid; Err = $_.Exception.Message }
       }
-      throw "HTTP $($resp.StatusCode)"
     }
-    Add-Content -Path $checkpoint -Value $token
-    $newIndexRows.Add("$blob`t$mid`tok")
-    $sent++
-    if ($sent % 250 -eq 0) { Write-Host "  uploaded $sent" }
-  } catch {
-    $errors++
-    Write-Warning "upload failed for $blob : $($_.Exception.Message)"
+
+    # single-threaded: safe to append to the checkpoint and the index
+    foreach ($r in $results) {
+      if ($r.Ok) {
+        Add-Content -Path $checkpoint -Value $r.Token
+        $newIndexRows.Add("$($r.Blob)`t$($r.Mid)`tok")
+        $sent++
+      } else {
+        $errors++
+        Write-Warning "upload failed ($($r.Code)) for $($r.Blob)$(if ($r.Err) { " : $($r.Err)" })"
+      }
+    }
+    $rate = if ($swAll.Elapsed.TotalMinutes -gt 0) { $sent / $swAll.Elapsed.TotalMinutes } else { 0 }
+    $left = if ($rate -gt 0) { ($total - $sent) / $rate } else { 0 }
+    Write-Host ("  {0,6}/{1}  {2:N0}/min  ~{3:N0} min left" -f $sent, $total, $rate, $left)
   }
 }
 
