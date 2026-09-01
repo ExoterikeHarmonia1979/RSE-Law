@@ -146,13 +146,19 @@ if (-not $hasMatter) {
 }
 
 # ---------------------------------------------------------------- 3. upload
-$blobToken = ''
-$tokenAt = (Get-Date).AddYears(-1)
-if ($Execute) {
-  $blobToken = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
-  $tokenAt = Get-Date
-  if (-not $blobToken) { throw "could not get a storage token - run 'az login' first" }
+# Refresh on the token's ACTUAL expiry, not on how long ago we asked for one.
+# `az account get-access-token` returns a CACHED token, so a token fetched "just now" can
+# already be most of the way through its life. Refreshing every N minutes from the time of
+# the call therefore expires mid-run - which is what happened, as a wall of 401s.
+$script:blobToken = ''
+$script:blobTokenExp = [datetime]::MinValue
+function Get-BlobToken {
+  $j = (& $az account get-access-token --resource https://storage.azure.com/ -o json) | ConvertFrom-Json
+  if (-not $j.accessToken) { throw "could not get a storage token - run 'az login' first" }
+  $script:blobToken = $j.accessToken
+  $script:blobTokenExp = if ($j.expiresOn) { [datetime]::Parse($j.expiresOn) } else { (Get-Date).AddMinutes(50) }
 }
+if ($Execute) { Get-BlobToken; Write-Host ("storage token valid until {0:HH:mm}" -f $script:blobTokenExp) }
 $sent = 0; $skipped = 0; $nokey = 0; $errors = 0
 $newIndexRows = New-Object System.Collections.Generic.List[string]
 
@@ -247,10 +253,8 @@ foreach ($e in $emls) {
     # spaces and brackets break its argument parsing so badly that it never sees --file
     # or --auth-mode, and reports "please specify one of --file and --data" instead. It
     # also spawned a process per blob, which is its own cost across 425,840 uploads.
-    if (((Get-Date) - $tokenAt).TotalMinutes -gt 40) {
-      $blobToken = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
-      $tokenAt = Get-Date
-    }
+    # five minutes of headroom, so a long upload cannot straddle the expiry
+    if ((Get-Date) -gt $script:blobTokenExp.AddMinutes(-5)) { Get-BlobToken }
     # Encode each path segment separately: %2F would escape the slashes that make the
     # virtual directories the archive is organised by.
     $encoded = ($blob -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
@@ -260,11 +264,26 @@ foreach ($e in $emls) {
     # character class, so PowerShell looks for a file whose name has a literal '2' there
     # and reports "cannot be resolved to a file". Escaping turns them back into characters.
     $literal = [System.Management.Automation.WildcardPattern]::Escape($e.FullName)
-    Invoke-WebRequest -Method Put -Uri $uri -InFile $literal -Headers @{
-      Authorization      = "Bearer $blobToken"
-      'x-ms-version'     = '2021-12-02'
-      'x-ms-blob-type'   = 'BlockBlob'
-    } -ContentType 'application/octet-stream' -ErrorAction Stop | Out-Null
+
+    # Belt and braces on top of the proactive refresh: a 401 means the token went stale
+    # despite the arithmetic, so fetch a new one and retry once rather than losing the
+    # message to a transient auth failure. Anything else is a real error and rethrows.
+    $attempt = 0
+    while ($true) {
+      $attempt++
+      $resp = Invoke-WebRequest -Method Put -Uri $uri -InFile $literal -Headers @{
+        Authorization      = "Bearer $($script:blobToken)"
+        'x-ms-version'     = '2021-12-02'
+        'x-ms-blob-type'   = 'BlockBlob'
+      } -ContentType 'application/octet-stream' -SkipHttpErrorCheck
+      if ($resp.StatusCode -eq 201) { break }
+      if ($resp.StatusCode -eq 401 -and $attempt -eq 1) {
+        Write-Host "  token rejected - refreshing and retrying"
+        Get-BlobToken
+        continue
+      }
+      throw "HTTP $($resp.StatusCode)"
+    }
     Add-Content -Path $checkpoint -Value $token
     $newIndexRows.Add("$blob`t$mid`tok")
     $sent++
