@@ -79,21 +79,46 @@ Write-Host "checkpoint holds $($done.Count) already-uploaded tokens"
 # Unpacking those wastes time and disk and buries the real content. Decided by listing
 # each archive rather than by its name, since Purview's package names vary and the
 # reports package (CSV only, no messages) is easy to mistake for the items package.
+# Windows ships bsdtar at System32\tar.exe, but Git Bash puts GNU tar on PATH ahead of it,
+# and GNU tar reads "C:\..." as a remote host:path spec - "Cannot connect to C: resolve
+# failed", exit 128. Whether the archive check worked therefore depended on PATH order,
+# which is not a thing to leave to chance.
+$tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path $tarExe)) { throw "Windows tar not found at $tarExe" }
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
 $zips = Get-ChildItem $Source -Filter *.zip -Recurse -ErrorAction SilentlyContinue
 foreach ($z in $zips) {
   $dest = Join-Path $Work ([IO.Path]::GetFileNameWithoutExtension($z.Name))
   if (Test-Path $dest) { continue }
-  $listing = & tar -tf $z.FullName 2>$null
-  $hasMail = $listing | Where-Object { $_ -match '\.(msg|pst)$' } | Select-Object -First 1
+
+  # Read the central directory rather than streaming the archive: it answers the question
+  # in under a second even for a 4.7 GB package, and it cannot be confused by which tar is
+  # on PATH. A failure to open is reported rather than silently treated as "no mail",
+  # which would skip a real export package.
+  $hasMail = $false
+  try {
+    $zf = [IO.Compression.ZipFile]::OpenRead($z.FullName)
+    try {
+      foreach ($entry in $zf.Entries) {
+        if ($entry.FullName -match '\.(msg|pst)$') { $hasMail = $true; break }
+      }
+    } finally { $zf.Dispose() }
+  } catch {
+    Write-Warning "could not read $($z.Name): $($_.Exception.Message) - skipping"
+    continue
+  }
   if (-not $hasMail) {
     Write-Host "skipping $($z.Name) - no .msg or .pst inside"
     continue
   }
+
   Write-Host "unpacking $($z.Name)"
-  # Windows' own extractor trips over the long paths Purview produces; tar is present on
-  # Server 2022 and handles them.
+  # bsdtar for the extraction: .NET's ExtractToDirectory refuses the long paths Purview
+  # produces, while bsdtar writes them via the \\?\ prefix.
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  & tar -xf $z.FullName -C $dest
+  & $tarExe -xf $z.FullName -C $dest
 }
 # ---------------------------------------------------------------- 2. get to messages
 # Purview exports either .msg files or PSTs. Prefer .msg: it needs no PST cracking, so no
