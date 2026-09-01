@@ -17,3 +17,9 @@ __pycache__/
 # Peeked Service Bus messages, saved before touching the queue. These carry live Graph
 # resource ids and subscription ids for real mail - operational scratch, not source.
 infra/logicapps/tools/dlq-preserved/
+
+# Ingest working directory: unpacked export packages and extracted messages, up to
+# ~204 GB for the full archive. The script now defaults it outside the repo, but an
+# explicit -Work could still land it here.
+ingest-work/
+rse-ingest-work/

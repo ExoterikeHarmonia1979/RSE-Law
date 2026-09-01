@@ -34,7 +34,10 @@ re-run safe.
 #>
 param(
   [Parameter(Mandatory)][string]$Source,
-  [string]$Work        = (Join-Path $PSScriptRoot 'ingest-work'),
+  # NOT inside the repo. This holds every extracted message - ~204 GB for the full
+  # archive - and unpacked packages besides. Defaults beside the source, which is where
+  # the disk space already had to be.
+  [string]$Work        = (Join-Path (Split-Path $Source -Parent) 'rse-ingest-work'),
   [string]$Account     = 'samatters',
   [string]$Container   = 'matters',
   [string]$IndexPath   = (Join-Path $PSScriptRoot 'messageid-index.tsv'),
@@ -60,10 +63,21 @@ if (Test-Path $checkpoint) { Get-Content $checkpoint | ForEach-Object { $done[$_
 Write-Host "checkpoint holds $($done.Count) already-uploaded tokens"
 
 # ---------------------------------------------------------------- 1. unpack
+# Only unpack archives that actually contain messages. Pointing -Source at a Downloads
+# folder is the normal case, and it will hold unrelated zips - installers, other tools.
+# Unpacking those wastes time and disk and buries the real content. Decided by listing
+# each archive rather than by its name, since Purview's package names vary and the
+# reports package (CSV only, no messages) is easy to mistake for the items package.
 $zips = Get-ChildItem $Source -Filter *.zip -Recurse -ErrorAction SilentlyContinue
 foreach ($z in $zips) {
   $dest = Join-Path $Work ([IO.Path]::GetFileNameWithoutExtension($z.Name))
   if (Test-Path $dest) { continue }
+  $listing = & tar -tf $z.FullName 2>$null
+  $hasMail = $listing | Where-Object { $_ -match '\.(msg|pst)$' } | Select-Object -First 1
+  if (-not $hasMail) {
+    Write-Host "skipping $($z.Name) - no .msg or .pst inside"
+    continue
+  }
   Write-Host "unpacking $($z.Name)"
   # Windows' own extractor trips over the long paths Purview produces; tar is present on
   # Server 2022 and handles them.
