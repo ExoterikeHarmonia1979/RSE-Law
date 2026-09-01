@@ -48,10 +48,18 @@ $ErrorActionPreference = 'Stop'
 $az = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $py = 'python'
 
-# Same rule as sweep-older-mail.ps1 / reconcile-missed.ps1. Keep the three in step.
+# Same rule as sweep-older-mail.ps1 / reconcile-missed.ps1, with one addition those two do
+# not need: the Purview export sanitises folder names, replacing BOTH dots and spaces with
+# hyphens. Matter 32.061 arrives as "32-061", and "Deleted Items" as "Deleted-Items".
+#
+# The hyphen form is accepted and normalised back to the dot form, because that is what
+# the existing 258,974 blobs use. Without this, ingested mail would file into a parallel
+# set of "32-061" folders sitting next to the real "32.061" ones - which is worse than
+# failing, because it looks like it worked.
 function Get-MatterHint([string]$leaf) {
   $t = "$leaf".Trim()
   if ($t -match '^\d{2,3}[A-Z]?\.\d{3,4}[A-Z]?$') { return $t }
+  if ($t -match '^(\d{2,3}[A-Z]?)-(\d{3,4}[A-Z]?)$') { return "$($Matches[1]).$($Matches[2])" }
   ''
 }
 
@@ -191,7 +199,9 @@ foreach ($e in $emls) {
   # unpacked. Measure the relative path from whichever root actually contains this file.
   $root = if ($parent.StartsWith($emlRoot, [StringComparison]::OrdinalIgnoreCase)) { $emlRoot } else { $Work }
   $rel = $parent.Substring($root.Length).TrimStart('\','/')
-  $fromBin = ($rel -split '[\\/]') -contains 'Deleted Items'
+  # 'Deleted Items' in the mailbox; 'Deleted-Items' once the export has sanitised it.
+  $segs = $rel -split '[\\/]'
+  $fromBin = ($segs -contains 'Deleted Items') -or ($segs -contains 'Deleted-Items')
   $section = if ($fromBin) { 'DeletedItems' } else { 'Emails' }
   $blob = "$matter/$section/$name"
 
