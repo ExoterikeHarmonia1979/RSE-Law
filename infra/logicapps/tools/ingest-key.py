@@ -26,8 +26,9 @@ corpus share one, because Outlook reuses the header across separately composed m
 sent date is what separates them, so it is part of the key rather than metadata.
 
 Usage
-    python ingest-key.py plan  <dir-of-eml> [--index messageid-index.tsv]
-    python ingest-key.py check <file.eml> ...
+    python ingest-key.py plan     <dir> [--index messageid-index.tsv]
+    python ingest-key.py manifest <dir> [out.tsv]    # path/token/messageId/blobName
+    python ingest-key.py check    <file> ...
 """
 import csv
 import datetime
@@ -189,6 +190,43 @@ def main():
             print(f'   sent       : {d["sentUtc"]}')
             print(f'   token      : {d["token"]}')
             print(f'   blob name  : {d["blobName"]}')
+        return 0
+
+    if mode == 'manifest':
+        # One pass over the tree, one TSV out. The caller used to invoke `check` per
+        # file, which meant a Python process per message - fine for six fixtures,
+        # ruinous for 425,840. Interpreter startup dominated everything else.
+        src = args[0]
+        out = args[1] if len(args) > 1 else None
+        rows = []
+        failed = 0
+        for root, _dirs, names in os.walk(src):
+            for n in names:
+                if not n.lower().endswith(('.eml', '.msg')):
+                    continue
+                p = os.path.join(root, n)
+                try:
+                    d = describe(p)
+                except Exception as e:
+                    failed += 1
+                    print(f'PARSE FAILED\t{p}\t{e}', file=sys.stderr)
+                    continue
+                if not d['token']:
+                    failed += 1
+                    print(f'NO KEY\t{p}', file=sys.stderr)
+                    continue
+                rows.append((p, d['token'], d['messageId'], d['blobName']))
+
+        stream = open(out, 'w', encoding='utf-8', newline='') if out else sys.stdout
+        try:
+            w = csv.writer(stream, delimiter='\t', lineterminator='\n')
+            w.writerow(['path', 'token', 'messageId', 'blobName'])
+            w.writerows(rows)
+        finally:
+            if out:
+                stream.close()
+        print(f'manifest: {len(rows):,} keyed, {failed:,} without a usable key',
+              file=sys.stderr)
         return 0
 
     if mode == 'plan':

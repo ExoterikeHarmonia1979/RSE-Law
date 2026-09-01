@@ -77,8 +77,13 @@ foreach ($z in $zips) {
 # Look in both places. $Work holds anything this script unpacked; $Source holds the
 # download itself, which is often already unpacked by hand - that is a normal way to
 # arrive here, not a mistake, so it has to work.
+# Get-Item, not Resolve-Path: Resolve-Path preserves 8.3 short names (ADMIN-~3) while
+# Get-ChildItem returns the long form (admin-MTSG3). Mixing the two silently breaks the
+# manifest join - every message keys as "no usable key" while the manifest looks correct.
+$Work = (Get-Item $Work).FullName
 $roots = @($Work)
-if ((Resolve-Path $Source).Path -ne (Resolve-Path $Work).Path) { $roots += (Resolve-Path $Source).Path }
+$srcFull = (Get-Item $Source).FullName
+if ($srcFull -ne $Work) { $roots += $srcFull }
 $msgs = @(); $psts = @()
 foreach ($r in $roots) {
   $msgs += Get-ChildItem $r -Filter *.msg -Recurse -ErrorAction SilentlyContinue
@@ -127,14 +132,29 @@ foreach ($r in $roots) { & $py (Join-Path $PSScriptRoot 'ingest-key.py') plan $r
 $sent = 0; $skipped = 0; $nokey = 0; $errors = 0
 $newIndexRows = New-Object System.Collections.Generic.List[string]
 
+# Key every message in ONE pass. This used to shell out to Python per file, which meant
+# an interpreter start per message - tolerable for a handful, ruinous for 425,840, where
+# process startup would have dominated the entire run.
+$manifest = Join-Path $Work 'manifest.tsv'
+foreach ($r in $roots) {
+  $part = Join-Path $Work ("manifest-" + [IO.Path]::GetFileName($r) + ".tsv")
+  & $py (Join-Path $PSScriptRoot 'ingest-key.py') manifest $r $part
+  if (Test-Path $part) {
+    if (Test-Path $manifest) { Get-Content $part | Select-Object -Skip 1 | Add-Content $manifest }
+    else { Copy-Item $part $manifest }
+  }
+}
+$keyed = @{}
+foreach ($row in (Import-Csv $manifest -Delimiter "`t")) { $keyed[$row.path] = $row }
+Write-Host "keyed in manifest: $($keyed.Count)"
+
 foreach ($e in $emls) {
   if ($Limit -gt 0 -and $sent -ge $Limit) { break }
 
-  $j = & $py (Join-Path $PSScriptRoot 'ingest-key.py') check $e.FullName
-  $token = ($j | Select-String 'token      : (.+)$').Matches.Groups[1].Value.Trim()
-  $name  = ($j | Select-String 'blob name  : (.+)$').Matches.Groups[1].Value.Trim()
-  $mid   = ($j | Select-String 'message-id : (.+)$').Matches.Groups[1].Value.Trim()
-  if (-not $token -or $token -eq 'None') { $nokey++; continue }
+  $k = $keyed[$e.FullName]
+  if (-not $k) { $nokey++; continue }
+  $token = $k.token; $name = $k.blobName; $mid = $k.messageId
+  if (-not $token) { $nokey++; continue }
   if ($done.ContainsKey($token)) { $skipped++; continue }
 
   $parent = Split-Path $e.FullName -Parent
