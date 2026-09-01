@@ -145,12 +145,7 @@ if (-not $hasMatter) {
         "Re-export with that option rather than filing 300,000 messages as Unsorted."
 }
 
-# ---------------------------------------------------------------- 3. key + plan
-Write-Host "`nscoring against the index (nothing is written yet)"
-# scan $Work: it contains the unpacked .msg AND $emlRoot, so one pass covers both routes
-foreach ($r in $roots) { & $py (Join-Path $PSScriptRoot 'ingest-key.py') plan $r --index $IndexPath }
-
-# ---------------------------------------------------------------- 4. upload
+# ---------------------------------------------------------------- 3. upload
 $blobToken = ''
 $tokenAt = (Get-Date).AddYears(-1)
 if ($Execute) {
@@ -176,6 +171,35 @@ foreach ($r in $roots) {
 $keyed = @{}
 foreach ($row in (Import-Csv $manifest -Delimiter "`t")) { $keyed[$row.path] = $row }
 Write-Host "keyed in manifest: $($keyed.Count)"
+
+# Score against the index from the manifest, rather than parsing every message a second
+# time. This was a separate `ingest-key.py plan` pass, so each run parsed the whole batch
+# twice - about 4 minutes wasted on 10,892 messages, and hours across 425,840.
+Write-Host "`nscoring against the index (nothing is written yet)"
+$idx = @{}
+if (Test-Path $IndexPath) {
+  $reader = [IO.File]::OpenText($IndexPath)
+  try {
+    [void]$reader.ReadLine()          # header
+    while ($null -ne ($line = $reader.ReadLine())) {
+      $c = $line.Split("`t")
+      if ($c.Count -ge 3 -and $c[2].Trim() -eq 'ok' -and $c[1].Trim()) {
+        $idx[$c[1].Trim().ToLowerInvariant()] = $true
+      }
+    }
+  } finally { $reader.Close() }
+}
+$already = 0; $fresh = 0; $tokenCount = @{}
+foreach ($row in $keyed.Values) {
+  if ($row.messageId -and $idx.ContainsKey($row.messageId.ToLowerInvariant())) { $already++ } else { $fresh++ }
+  $tokenCount[$row.token] = 1 + $tokenCount[$row.token]
+}
+$dupes = @($tokenCount.Values | Where-Object { $_ -gt 1 }).Count
+Write-Host ("  index holds                       : {0,7:N0} message-ids" -f $idx.Count)
+Write-Host ("  message-id already in the archive : {0,7:N0}" -f $already)
+Write-Host ("  not seen before                   : {0,7:N0}" -f $fresh)
+Write-Host ("  identical keys within this batch  : {0,7:N0}  (same message twice - they overwrite)" -f $dupes)
+Write-Host ""
 
 foreach ($e in $emls) {
   if ($Limit -gt 0 -and $sent -ge $Limit) { break }
