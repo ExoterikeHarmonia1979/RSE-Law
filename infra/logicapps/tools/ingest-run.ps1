@@ -70,21 +70,42 @@ foreach ($z in $zips) {
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
   & tar -xf $z.FullName -C $dest
 }
-$psts = Get-ChildItem $Work -Filter *.pst -Recurse -ErrorAction SilentlyContinue
-Write-Host "PSTs found: $($psts.Count)"
-if (-not $psts) { throw "no PSTs under $Work - check the export downloaded and unpacked" }
+# ---------------------------------------------------------------- 2. get to messages
+# Purview exports either .msg files or PSTs. Prefer .msg: it needs no PST cracking, so no
+# Outlook, no MAPI and no commercial library, and Azure AI Search indexes it natively.
+# PST support stays for packages already exported that way.
+# Look in both places. $Work holds anything this script unpacked; $Source holds the
+# download itself, which is often already unpacked by hand - that is a normal way to
+# arrive here, not a mistake, so it has to work.
+$roots = @($Work)
+if ((Resolve-Path $Source).Path -ne (Resolve-Path $Work).Path) { $roots += (Resolve-Path $Source).Path }
+$msgs = @(); $psts = @()
+foreach ($r in $roots) {
+  $msgs += Get-ChildItem $r -Filter *.msg -Recurse -ErrorAction SilentlyContinue
+  $psts += Get-ChildItem $r -Filter *.pst -Recurse -ErrorAction SilentlyContinue
+}
+Write-Host ".msg found: $($msgs.Count)   PSTs found: $($psts.Count)"
 
-# ---------------------------------------------------------------- 2. PST -> .eml
-foreach ($p in $psts) {
-  $marker = Join-Path $emlRoot ("." + [IO.Path]::GetFileNameWithoutExtension($p.Name) + ".extracted")
-  if (Test-Path $marker) { Write-Host "already extracted: $($p.Name)"; continue }
-  Write-Host "extracting $($p.Name)"
-  & (Join-Path $PSScriptRoot 'pst-to-eml.ps1') -Pst $p.FullName -Out $emlRoot
-  New-Item -ItemType File -Force -Path $marker | Out-Null
+if ($psts) {
+  foreach ($p in $psts) {
+    $marker = Join-Path $emlRoot ("." + [IO.Path]::GetFileNameWithoutExtension($p.Name) + ".extracted")
+    if (Test-Path $marker) { Write-Host "already extracted: $($p.Name)"; continue }
+    Write-Host "extracting $($p.Name)"
+    & (Join-Path $PSScriptRoot 'pst-to-eml.ps1') -Pst $p.FullName -Out $emlRoot
+    New-Item -ItemType File -Force -Path $marker | Out-Null
+  }
 }
 
-$emls = Get-ChildItem $emlRoot -Filter *.eml -Recurse
-Write-Host "extracted messages: $($emls.Count)"
+# .msg files are used where they lie - their folder path is the matter, so moving or
+# flattening them would destroy the attribution this depends on.
+$extracted = @()
+if (Test-Path $emlRoot) { $extracted += Get-ChildItem $emlRoot -Filter *.eml -Recurse }
+$extracted += $msgs
+$emls = $extracted
+Write-Host "messages to process: $($emls.Count)"
+if (-not $emls) {
+  throw "no .msg or .pst content under $Work - check the export downloaded and unpacked"
+}
 
 # refuse to run blind if the folder structure was lost upstream
 $hasMatter = $false
@@ -99,7 +120,8 @@ if (-not $hasMatter) {
 
 # ---------------------------------------------------------------- 3. key + plan
 Write-Host "`nscoring against the index (nothing is written yet)"
-& $py (Join-Path $PSScriptRoot 'ingest-key.py') plan $emlRoot --index $IndexPath
+# scan $Work: it contains the unpacked .msg AND $emlRoot, so one pass covers both routes
+foreach ($r in $roots) { & $py (Join-Path $PSScriptRoot 'ingest-key.py') plan $r --index $IndexPath }
 
 # ---------------------------------------------------------------- 4. upload
 $sent = 0; $skipped = 0; $nokey = 0; $errors = 0
@@ -131,7 +153,10 @@ foreach ($e in $emls) {
   # Same folder, different container. Still ingested, still searchable, still attributed
   # to its matter - but the path says where it came from, and nothing has to be trusted
   # to remember. 1,657 items sit under Deleted Items today.
-  $rel = $parent.Substring($emlRoot.Length).TrimStart('\','/')
+  # .eml sits under $emlRoot (extracted from a PST); .msg sits under $Work where it was
+  # unpacked. Measure the relative path from whichever root actually contains this file.
+  $root = if ($parent.StartsWith($emlRoot, [StringComparison]::OrdinalIgnoreCase)) { $emlRoot } else { $Work }
+  $rel = $parent.Substring($root.Length).TrimStart('\','/')
   $fromBin = ($rel -split '[\\/]') -contains 'Deleted Items'
   $section = if ($fromBin) { 'DeletedItems' } else { 'Emails' }
   $blob = "$matter/$section/$name"
