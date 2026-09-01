@@ -203,7 +203,9 @@ $newIndexRows = New-Object System.Collections.Generic.List[string]
 $manifest = Join-Path $Work 'manifest.tsv'
 foreach ($r in $roots) {
   $part = Join-Path $Work ("manifest-" + [IO.Path]::GetFileName($r) + ".tsv")
-  & $py (Join-Path $PSScriptRoot 'ingest-key.py') manifest $r $part
+  # --resume: a keying pass over a large batch runs for tens of minutes, and re-running
+  # after an interruption should not start from nothing.
+  & $py (Join-Path $PSScriptRoot 'ingest-key.py') manifest $r $part --resume
   if (Test-Path $part) {
     if (Test-Path $manifest) { Get-Content $part | Select-Object -Skip 1 | Add-Content $manifest }
     else { Copy-Item $part $manifest }

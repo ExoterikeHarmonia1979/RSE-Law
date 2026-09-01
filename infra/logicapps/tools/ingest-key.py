@@ -211,15 +211,45 @@ def main():
         # One pass over the tree, one TSV out. The caller used to invoke `check` per
         # file, which meant a Python process per message - fine for six fixtures,
         # ruinous for 425,840. Interpreter startup dominated everything else.
+        #
+        # Rows are written AS THEY ARE KEYED, not buffered to the end. A 49,665-message
+        # pass runs for half an hour, and buffering meant no progress to look at, no
+        # partial result, and everything lost if it was interrupted. Streaming makes the
+        # file grow visibly and makes --resume possible.
         src = args[0]
         out = args[1] if len(args) > 1 else None
-        rows = []
-        failed = 0
+        resume = '--resume' in args
+
+        done = set()
+        if resume and out and os.path.exists(out):
+            with open(out, encoding='utf-8', errors='replace', newline='') as f:
+                r = csv.reader(f, delimiter='\t')
+                next(r, None)
+                for rec in r:
+                    if rec:
+                        done.add(rec[0])
+            print(f'resuming: {len(done):,} already keyed', file=sys.stderr)
+
+        files = []
         for root, _dirs, names in os.walk(src):
             for n in names:
-                if not n.lower().endswith(('.eml', '.msg')):
+                if n.lower().endswith(('.eml', '.msg')):
+                    files.append(os.path.join(root, n))
+        total = len(files)
+        print(f'keying {total:,} messages', file=sys.stderr)
+
+        kept = failed = skipped = 0
+        append = resume and done
+        stream = (open(out, 'a' if append else 'w', encoding='utf-8', newline='')
+                  if out else sys.stdout)
+        try:
+            w = csv.writer(stream, delimiter='\t', lineterminator='\n')
+            if not append:
+                w.writerow(['path', 'token', 'messageId', 'blobName'])
+            for i, p in enumerate(files, 1):
+                if p in done:
+                    skipped += 1
                     continue
-                p = os.path.join(root, n)
                 try:
                     d = describe(p)
                 except Exception as e:
@@ -230,18 +260,23 @@ def main():
                     failed += 1
                     print(f'NO KEY\t{p}', file=sys.stderr)
                     continue
-                rows.append((p, d['token'], d['messageId'], d['blobName']))
-
-        stream = open(out, 'w', encoding='utf-8', newline='') if out else sys.stdout
-        try:
-            w = csv.writer(stream, delimiter='\t', lineterminator='\n')
-            w.writerow(['path', 'token', 'messageId', 'blobName'])
-            w.writerows(rows)
+                w.writerow((p, d['token'], d['messageId'], d['blobName']))
+                kept += 1
+                # Flush on the same cadence as the progress line, so what the file holds
+                # matches what was last reported - otherwise a resume would silently drop
+                # whatever was still sitting in the buffer.
+                if i % 2000 == 0:
+                    stream.flush()
+                    pct = i * 100 // total if total else 100
+                    print(f'  keyed {i:,}/{total:,} ({pct}%)', file=sys.stderr, flush=True)
         finally:
             if out:
                 stream.close()
-        print(f'manifest: {len(rows):,} keyed, {failed:,} without a usable key',
-              file=sys.stderr)
+
+        msg = f'manifest: {kept:,} keyed, {failed:,} without a usable key'
+        if skipped:
+            msg += f', {skipped:,} already present'
+        print(msg, file=sys.stderr)
         return 0
 
     if mode == 'plan':
