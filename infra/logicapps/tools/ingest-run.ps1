@@ -255,7 +255,12 @@ foreach ($e in $emls) {
     # virtual directories the archive is organised by.
     $encoded = ($blob -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
     $uri = "https://$Account.blob.core.windows.net/$Container/$encoded"
-    Invoke-WebRequest -Method Put -Uri $uri -InFile $e.FullName -Headers @{
+    # -InFile takes a WILDCARD path, not a literal one, and there is no -LiteralFile. Mail
+    # subjects routinely contain brackets - "RE[2] Deposition of Dr. Valdez" - and [2] is a
+    # character class, so PowerShell looks for a file whose name has a literal '2' there
+    # and reports "cannot be resolved to a file". Escaping turns them back into characters.
+    $literal = [System.Management.Automation.WildcardPattern]::Escape($e.FullName)
+    Invoke-WebRequest -Method Put -Uri $uri -InFile $literal -Headers @{
       Authorization      = "Bearer $blobToken"
       'x-ms-version'     = '2021-12-02'
       'x-ms-blob-type'   = 'BlockBlob'
