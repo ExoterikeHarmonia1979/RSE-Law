@@ -89,6 +89,23 @@ if (-not (Test-Path $tarExe)) { throw "Windows tar not found at $tarExe" }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $zips = Get-ChildItem $Source -Filter *.zip -Recurse -ErrorAction SilentlyContinue
+
+# Refuse to start a batch that cannot fit. .msg files barely compress - the packages are
+# roughly 1:1 - so the extraction needs about as much space again as the zips occupy, and
+# running out mid-extraction leaves a half-unpacked tree that looks complete. Checked here
+# rather than discovered as "No space left on device" an hour in.
+$zipBytes = ($zips | Measure-Object Length -Sum).Sum
+$drive = (Get-Item $Work).PSDrive
+if ($drive -and $zipBytes) {
+  $needGb = $zipBytes / 1GB * 1.15
+  $freeGb = $drive.Free / 1GB
+  Write-Host ("packages {0:N1} GB, need ~{1:N1} GB to extract, {2:N1} GB free" -f ($zipBytes/1GB), $needGb, $freeGb)
+  if ($freeGb -lt $needGb) {
+    throw ("not enough disk: need ~{0:N1} GB, have {1:N1} GB. Delete a completed batch's " -f $needGb, $freeGb) +
+          "extracted folder under $Work (keep done.txt), or export a narrower date range."
+  }
+}
+
 foreach ($z in $zips) {
   $dest = Join-Path $Work ([IO.Path]::GetFileNameWithoutExtension($z.Name))
   if (Test-Path $dest) { continue }
