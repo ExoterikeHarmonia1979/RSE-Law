@@ -36,14 +36,42 @@ if (-not $token) { throw "no storage token - run 'az login'" }
 
 # --query with a bracket in it breaks az.cmd's argument parsing, so ask for the raw two
 # columns and filter here instead.
-Write-Host "listing $Container/$Prefix ..."
-$raw = & $az storage blob list --account-name $Account --container-name $Container `
-         --prefix $Prefix --auth-mode login --query "[].[name,properties.lastModified]" -o tsv 2>$null
-$blobs = @($raw) | ForEach-Object {
-  $p = $_ -split "`t"
-  if ($p.Count -ge 2) { [pscustomobject]@{ Name = $p[0]; Mod = [datetime]$p[1] } }
-} | Where-Object { $_.Mod -ge $Since -and $_.Mod -le $Until }
+Write-Host ("listing {0}/{1} ..." -f $Container, $(if ($Prefix) { $Prefix } else { '(whole container)' }))
+# --prefix "" is not the same as omitting it: az rejects an empty value with
+# "argument --prefix: expected one argument" and exits 2, which reads as an empty
+# container rather than a failed call. Build the arguments conditionally.
+#
+# --num-results "*" is not optional. Without it az stops at 5,000 blobs and reports
+# success, so a container-wide run silently considers a fraction of a percent of the
+# container and reports a confident, tiny number. sweep-older-mail.ps1 has used this
+# since it was written; this script did not, and the first full run "found" 66 blobs.
+$argv = @('storage','blob','list','--account-name',$Account,'--container-name',$Container,
+          '--num-results','*','--auth-mode','login',
+          '--query','[].[name,properties.lastModified]','-o','tsv')
+if ($Prefix) { $argv += @('--prefix', $Prefix) }
+$raw = & $az @argv 2>$null
+if ($LASTEXITCODE -ne 0) { throw "blob list failed (az exit $LASTEXITCODE)" }
 
+$all = @($raw) | ForEach-Object {
+  $p = $_ -split "`t"
+  # az emits pagination notices on a long listing; anything without a parseable date is
+  # not a blob row.
+  if ($p.Count -ge 2) {
+    # try/catch, not [datetime]::TryParse - PowerShell cannot bind the two-argument
+    # overload ("Cannot find an overload for TryParse and the argument count 2").
+    try { [pscustomobject]@{ Name = $p[0]; Mod = [datetime]$p[1] } } catch { }
+  }
+}
+
+# Same guard as sweep-older-mail.ps1: a short listing means the call was truncated or
+# failed, not that the container is small. Deciding what to reindex from a partial
+# listing is worse than not running at all, because the result looks like an answer.
+if (-not $Prefix -and $all.Count -lt 100000) {
+  throw "container listing returned only $($all.Count) blobs - refusing to decide from that"
+}
+Write-Host ("{0:N0} blob(s) listed" -f $all.Count)
+
+$blobs = @($all | Where-Object { $_.Mod -ge $Since -and $_.Mod -le $Until })
 Write-Host ("{0:N0} blob(s) in range" -f $blobs.Count)
 if (-not $blobs) { return }
 if (-not $Execute) {
