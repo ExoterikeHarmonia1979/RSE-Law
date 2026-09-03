@@ -54,11 +54,17 @@ public class EmlAttachmentNamesSkill
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
     {
-        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+        // Deserialise straight from the request stream. Reading it into a string first
+        // meant holding the whole payload twice: once as a .NET string (UTF-16, so double
+        // the bytes) and again as the parsed object. file_data arrives base64-encoded, so
+        // a batch of large messages is a very big body, and on a 2048 MB instance that
+        // buffering is what pushed requests past the skill's 230s timeout - Azure AI Search
+        // then dropped the connection, which surfaces here as "Broken pipe" and at the
+        // indexer as "Could not execute skill because the Web Api request failed".
         SkillRequest? request;
         try
         {
-            request = JsonSerializer.Deserialize<SkillRequest>(requestBody);
+            request = await JsonSerializer.DeserializeAsync<SkillRequest>(req.Body);
         }
         catch (JsonException)
         {
