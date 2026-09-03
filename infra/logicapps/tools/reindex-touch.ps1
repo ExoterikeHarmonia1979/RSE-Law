@@ -1,0 +1,84 @@
+#requires -Version 7
+<#
+Make the search indexer revisit blobs it has already skipped.
+
+A blob indexer tracks progress with a high-water mark on LastModified. If a document fails
+- because the service was out of storage, or a skill timed out - the indexer records the
+failure and moves on, and it will never look at that blob again. Re-running the indexer
+does not help.
+
+Setting a blob's metadata updates its LastModified without touching its content, which
+puts it back ahead of the high-water mark. The next indexer run then treats it as new.
+
+This is the surgical alternative to `POST /indexers/{name}/reset`, which reprocesses the
+entire corpus - every document through the custom skill and the embedding model again.
+That is the right tool for a small, known set of blobs; a full reset is the right tool
+when the affected set is not known.
+
+  ./reindex-touch.ps1 -Prefix "06.222/"                       # dry run
+  ./reindex-touch.ps1 -Prefix "06.222/" -Execute
+  ./reindex-touch.ps1 -Prefix "" -Since 2026-09-03T08:00 -Until 2026-09-03T21:00 -Execute
+#>
+param(
+  [string]$Prefix = '',
+  [datetime]$Since = [datetime]::MinValue,
+  [datetime]$Until = [datetime]::MaxValue,
+  [string]$Account = 'samatters',
+  [string]$Container = 'matters',
+  [int]$Parallel = 12,
+  [switch]$Execute
+)
+$ErrorActionPreference = 'Stop'
+$az = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
+
+$token = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
+if (-not $token) { throw "no storage token - run 'az login'" }
+
+# --query with a bracket in it breaks az.cmd's argument parsing, so ask for the raw two
+# columns and filter here instead.
+Write-Host "listing $Container/$Prefix ..."
+$raw = & $az storage blob list --account-name $Account --container-name $Container `
+         --prefix $Prefix --auth-mode login --query "[].[name,properties.lastModified]" -o tsv 2>$null
+$blobs = @($raw) | ForEach-Object {
+  $p = $_ -split "`t"
+  if ($p.Count -ge 2) { [pscustomobject]@{ Name = $p[0]; Mod = [datetime]$p[1] } }
+} | Where-Object { $_.Mod -ge $Since -and $_.Mod -le $Until }
+
+Write-Host ("{0:N0} blob(s) in range" -f $blobs.Count)
+if (-not $blobs) { return }
+if (-not $Execute) {
+  $blobs | Select-Object -First 10 | ForEach-Object { "  would touch  {0:yyyy-MM-dd HH:mm}  {1}" -f $_.Mod, $_.Name }
+  Write-Host "`nre-run with -Execute to touch them."
+  return
+}
+
+$done = 0; $failed = 0
+$chunks = [Math]::Ceiling($blobs.Count / 500)
+for ($i = 0; $i -lt $blobs.Count; $i += 500) {
+  $chunk = $blobs[$i..([Math]::Min($i + 499, $blobs.Count - 1))]
+  $res = $chunk | ForEach-Object -ThrottleLimit $Parallel -Parallel {
+    $enc = ($_.Name -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+    $uri = "https://$($using:Account).blob.core.windows.net/$($using:Container)/$enc`?comp=metadata"
+    try {
+      # Metadata only - the blob's content is not read or rewritten. The point is purely
+      # the LastModified bump this causes.
+      $r = Invoke-WebRequest -Method Put -Uri $uri -Headers @{
+        Authorization    = "Bearer $($using:token)"
+        'x-ms-version'   = '2021-12-02'
+        'x-ms-meta-reindex' = [string](Get-Date -Format 'yyyyMMddHHmm')
+      } -SkipHttpErrorCheck
+      [pscustomobject]@{ ok = ($r.StatusCode -eq 200); code = [int]$r.StatusCode; name = $_.Name }
+    } catch {
+      [pscustomobject]@{ ok = $false; code = -1; name = $_.Name; err = $_.Exception.Message }
+    }
+  }
+  foreach ($r in $res) {
+    if ($r.ok) { $done++ } else { $failed++; Write-Warning "touch failed ($($r.code)) $($r.name)" }
+  }
+  Write-Host ("  {0:N0}/{1:N0}" -f $done, $blobs.Count)
+}
+
+Write-Host ""
+Write-Host ("touched {0:N0}, failed {1:N0}" -f $done, $failed)
+Write-Host "The next indexer run will pick these up. To start one now:"
+Write-Host "  POST https://<service>.search.windows.net/indexers/matters-eml-indexer/run?api-version=2024-07-01"
