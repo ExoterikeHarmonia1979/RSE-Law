@@ -217,7 +217,16 @@ $newIndexRows = New-Object System.Collections.Generic.List[string]
 # Key every message in ONE pass. This used to shell out to Python per file, which meant
 # an interpreter start per message - tolerable for a handful, ruinous for 425,840, where
 # process startup would have dominated the entire run.
+# The per-root part files are the durable ones - they are what --resume reads, so they must
+# survive between runs. The COMBINED file is rebuilt from them every time.
+#
+# It used to be appended to instead, and never reset, so every run added another full copy
+# of every part. After ten runs manifest.tsv held 581,558 rows for 166,573 distinct paths -
+# each one about three and a half times over. Nothing was uploaded twice, because the
+# lookup is by path and the checkpoint catches repeats, but each run then loaded that whole
+# file into memory, so the keying step got slower and heavier with every batch.
 $manifest = Join-Path $Work 'manifest.tsv'
+if (Test-Path $manifest) { [IO.File]::Delete($manifest) }
 foreach ($r in $roots) {
   $part = Join-Path $Work ("manifest-" + [IO.Path]::GetFileName($r) + ".tsv")
   # --resume: a keying pass over a large batch runs for tens of minutes, and re-running
