@@ -31,6 +31,15 @@ re-run safe.
     ./ingest-run.ps1 -Source D:\exports                 # dry run: what would happen
     ./ingest-run.ps1 -Source D:\exports -Execute
     ./ingest-run.ps1 -Source D:\exports -Execute -Limit 500   # prove one batch first
+
+FOR A WHOLE QUARTER, USE ingest-packages.ps1 INSTEAD
+----------------------------------------------------
+This script extracts every package in -Source before it uploads anything, so it needs
+disk for the entire batch at once. A quarter can be far more than that: 2026 Q1 came back
+as six packages totalling 53 GB and filled a 249 GB drive. ingest-packages.ps1 wraps this
+one, feeding it a single package at a time and reclaiming each extraction before the next,
+which makes the quarter's size irrelevant. Use this script directly only for a single
+package or a small batch.
 #>
 param(
   [Parameter(Mandatory)][string]$Source,
