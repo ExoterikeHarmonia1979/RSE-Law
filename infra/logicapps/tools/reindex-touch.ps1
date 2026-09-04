@@ -31,8 +31,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $az = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 
-$token = (& $az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv).Trim()
-if (-not $token) { throw "no storage token - run 'az login'" }
+# Refresh on the token's real expiry, not on elapsed time. `az account get-access-token`
+# hands back a CACHED token, so one fetched at the start of a long run can already be most
+# of the way through its life. A first version of this took the token once and touched
+# 87,900 blobs with it: 68,476 succeeded and the remaining 19,424 all failed 401 when it
+# expired mid-run. Same mistake ingest-run.ps1 made, same fix.
+$script:token = ''
+$script:tokenExp = [datetime]::MinValue
+function Get-StorageToken {
+  $j = (& $az account get-access-token --resource https://storage.azure.com/ -o json) | ConvertFrom-Json
+  if (-not $j.accessToken) { throw "no storage token - run 'az login'" }
+  $script:token = $j.accessToken
+  $script:tokenExp = if ($j.expiresOn) { [datetime]::Parse($j.expiresOn) } else { (Get-Date).AddMinutes(50) }
+}
+Get-StorageToken
+Write-Host ("storage token valid until {0:HH:mm}" -f $script:tokenExp)
 
 # --query with a bracket in it breaks az.cmd's argument parsing, so ask for the raw two
 # columns and filter here instead.
@@ -83,6 +96,9 @@ if (-not $Execute) {
 $done = 0; $failed = 0
 $chunks = [Math]::Ceiling($blobs.Count / 500)
 for ($i = 0; $i -lt $blobs.Count; $i += 500) {
+  # five minutes of headroom so a chunk cannot straddle the expiry
+  if ((Get-Date) -gt $script:tokenExp.AddMinutes(-5)) { Get-StorageToken }
+  $tok = $script:token
   $chunk = $blobs[$i..([Math]::Min($i + 499, $blobs.Count - 1))]
   $res = $chunk | ForEach-Object -ThrottleLimit $Parallel -Parallel {
     $enc = ($_.Name -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
@@ -91,7 +107,7 @@ for ($i = 0; $i -lt $blobs.Count; $i += 500) {
       # Metadata only - the blob's content is not read or rewritten. The point is purely
       # the LastModified bump this causes.
       $r = Invoke-WebRequest -Method Put -Uri $uri -Headers @{
-        Authorization    = "Bearer $($using:token)"
+        Authorization    = "Bearer $($using:tok)"
         'x-ms-version'   = '2021-12-02'
         'x-ms-meta-reindex' = [string](Get-Date -Format 'yyyyMMddHHmm')
       } -SkipHttpErrorCheck
