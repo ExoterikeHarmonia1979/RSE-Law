@@ -23,3 +23,7 @@ infra/logicapps/tools/dlq-preserved/
 # explicit -Work could still land it here.
 ingest-work/
 rse-ingest-work/
+
+# reindex-touch.ps1's record of which blobs it has already touched. Operational state,
+# grows to hundreds of thousands of lines, and is rebuildable from blob LastModified.
+infra/logicapps/tools/reindex-touched.txt

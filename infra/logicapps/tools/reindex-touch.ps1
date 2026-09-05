@@ -31,6 +31,25 @@ param(
 $ErrorActionPreference = 'Stop'
 $az = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 
+# Clamp the window to the moment this run starts.
+#
+# Touching a blob sets its LastModified to now. If -Until is later than that, the blobs
+# this run touches land back INSIDE the window and are eligible again, so the run never
+# converges: a first pass over 87,900 blobs was followed by a second that found 90,960
+# rather than the ~19,400 that had actually failed. It re-touched everything the first
+# pass had already done.
+#
+# With the end clamped to the start time, anything touched during the run is stamped after
+# the window closes and drops out by construction. Re-running the same command then does
+# exactly what it should - picks up only what genuinely failed.
+$runStart = Get-Date
+if ($Until -gt $runStart) {
+  if ($Until -ne [datetime]::MaxValue) {
+    Write-Host ("-Until {0:yyyy-MM-dd HH:mm} is in the future or mid-run; clamping to now ({1:HH:mm}) so the run converges" -f $Until, $runStart)
+  }
+  $Until = $runStart
+}
+
 # Refresh on the token's real expiry, not on elapsed time. `az account get-access-token`
 # hands back a CACHED token, so one fetched at the start of a long run can already be most
 # of the way through its life. A first version of this took the token once and touched
@@ -84,9 +103,28 @@ if (-not $Prefix -and $all.Count -lt 100000) {
 }
 Write-Host ("{0:N0} blob(s) listed" -f $all.Count)
 
-$blobs = @($all | Where-Object { $_.Mod -ge $Since -and $_.Mod -le $Until })
-Write-Host ("{0:N0} blob(s) in range" -f $blobs.Count)
-if (-not $blobs) { return }
+$inRange = @($all | Where-Object { $_.Mod -ge $Since -and $_.Mod -le $Until })
+Write-Host ("{0:N0} blob(s) in range" -f $inRange.Count)
+
+# Skip anything already touched, recorded in a local file rather than in blob metadata.
+#
+# The clamp above stops a run re-touching its own work, but it is not enough on its own:
+# run again tomorrow with the same wide -Since and yesterday's touches fall inside the
+# window again, because the window now extends to a later "now". A record of what has been
+# done is what actually makes this converge.
+#
+# Blob metadata was the obvious place for that marker and does not work - listing it back
+# returns None even for blobs that were touched successfully - so this uses the same
+# checkpoint-file pattern as ingest-run.ps1, which is proven here.
+$touchLog = Join-Path $PSScriptRoot 'reindex-touched.txt'
+$already = @{}
+if (Test-Path $touchLog) {
+  Get-Content $touchLog | ForEach-Object { $already[$_] = $true }
+  Write-Host ("{0:N0} already touched in a previous run" -f $already.Count)
+}
+$blobs = @($inRange | Where-Object { -not $already.ContainsKey($_.Name) })
+Write-Host ("{0:N0} to touch" -f $blobs.Count)
+if (-not $blobs) { Write-Host "nothing to do - converged."; return }
 if (-not $Execute) {
   $blobs | Select-Object -First 10 | ForEach-Object { "  would touch  {0:yyyy-MM-dd HH:mm}  {1}" -f $_.Mod, $_.Name }
   Write-Host "`nre-run with -Execute to touch them."
@@ -116,6 +154,10 @@ for ($i = 0; $i -lt $blobs.Count; $i += 500) {
       [pscustomobject]@{ ok = $false; code = -1; name = $_.Name; err = $_.Exception.Message }
     }
   }
+  # Record successes only. A failed touch left LastModified unchanged, so the blob stays
+  # in range and a re-run picks it up - which is exactly the recovery path wanted.
+  $okNames = @($res | Where-Object { $_.ok } | ForEach-Object { $_.name })
+  if ($okNames) { Add-Content -Path $touchLog -Value $okNames }
   foreach ($r in $res) {
     if ($r.ok) { $done++ } else { $failed++; Write-Warning "touch failed ($($r.code)) $($r.name)" }
   }
