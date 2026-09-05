@@ -8,7 +8,9 @@
       "uri": "https://regexazfunc.azurewebsites.net/api/EmlAttachmentNamesSkill?code=__FUNCTION_KEY__",
       "httpMethod": "POST",
       "timeout": "PT230S",
-      "batchSize": 2,
+      "description": "batchSize 1, not 2: file_data is base64, so batching two large messages made a very big POST body and requests exceeded the 230s timeout. Search then dropped the connection - 'Web Api request failed' at the indexer, 'Broken pipe' in the function - failing 345 documents in one run. degreeOfParallelism 3 rather than the default 5, so a large indexing backlog does not put five heavy concurrent requests on 2 GB instances.",
+      "batchSize": 1,
+      "degreeOfParallelism": 3,
       "context": "/document",
       "inputs": [
         { "name": "file_data", "source": "/document/file_data" }
