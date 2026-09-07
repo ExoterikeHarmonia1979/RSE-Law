@@ -383,7 +383,7 @@ internal static class MattersBlobs
 dotnet test RegExAzFunc.Tests
 ```
 
-Expected: PASS, 11 tests.
+Expected: PASS, 16 tests (xunit counts each Theory case separately).
 
 - [ ] **Step 6: Delegate from `EmlPreviewFunc`**
 
@@ -956,7 +956,7 @@ internal static class BrowsePaths
 dotnet test RegExAzFunc.Tests --filter BrowsePathsTests
 ```
 
-Expected: PASS, 12 tests.
+Expected: PASS, 13 tests (xunit counts each Theory case separately).
 
 - [ ] **Step 5: Create `MattersBrowseFunc.cs` with the list operation**
 
