@@ -109,6 +109,11 @@ public class EmlPreviewFunc
             });
         }
 
+        if (MsgProjection.LooksLikeCompoundFile(docBytes!))
+        {
+            return new OkObjectResult(MsgProjection.ToPreview(MsgProjection.Read(docBytes!), Sanitize));
+        }
+
         var (message, _, error) = await LoadMessage(request.StoragePath);
         if (error != null) { return error; }
 
@@ -170,6 +175,21 @@ public class EmlPreviewFunc
             }
             req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition(IsDownload(req) ? "attachment" : "inline", file);
             return new FileContentResult(rawBytes!, InferContentType(file));
+        }
+
+        if (MsgProjection.LooksLikeCompoundFile(rawBytes!))
+        {
+            IMsgMessage msg = MsgProjection.Read(rawBytes!);
+            foreach (MsgAttachment att in msg.Attachments)
+            {
+                if (!string.Equals(att.Name, attachmentName, StringComparison.OrdinalIgnoreCase)) { continue; }
+
+                string type = InferContentType(att.Name);
+                string disposition = IsDownload(req) ? "attachment" : "inline";
+                req.HttpContext.Response.Headers["Content-Disposition"] = ContentDisposition(disposition, att.Name);
+                return new FileContentResult(att.Data, type);
+            }
+            return new NotFoundObjectResult($"Attachment '{attachmentName}' was not found in the message.");
         }
 
         var (message, _, error) = await LoadMessage(storagePath);
