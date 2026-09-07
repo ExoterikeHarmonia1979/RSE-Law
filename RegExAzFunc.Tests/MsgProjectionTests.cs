@@ -31,6 +31,36 @@ public class MsgProjectionTests
         Assert.False(MsgProjection.LooksLikeCompoundFile([0xD0, 0xCF]));
     }
 
+    // A blob can pass LooksLikeCompoundFile on its first 8 bytes and still be truncated or
+    // corrupt beyond that header - production sees this on partial uploads/reindex races.
+    // MsgProjection.Read throws in that case (confirmed: OpenMcdf.FileFormatException); the
+    // callers must degrade gracefully rather than 500, mirroring how LoadMessage already
+    // handles a corrupt .eml.
+    [Fact]
+    public void Read_throws_on_bytes_that_only_have_the_ole2_header()
+    {
+        byte[] header = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        byte[] garbage = new byte[64];
+        Array.Copy(header, garbage, header.Length);
+        for (int i = 8; i < garbage.Length; i++) { garbage[i] = 0x42; }
+
+        Assert.ThrowsAny<Exception>(() => MsgProjection.Read(garbage));
+    }
+
+    [Fact]
+    public void TryRead_reports_failure_instead_of_throwing_on_corrupt_bytes()
+    {
+        byte[] header = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        byte[] garbage = new byte[64];
+        Array.Copy(header, garbage, header.Length);
+        for (int i = 8; i < garbage.Length; i++) { garbage[i] = 0x42; }
+
+        bool ok = MsgProjection.TryRead(garbage, out IMsgMessage? message);
+
+        Assert.False(ok);
+        Assert.Null(message);
+    }
+
     [Fact]
     public void ToPreview_carries_the_headers_across()
     {

@@ -70,6 +70,24 @@ internal static class MsgProjection
         };
     }
 
+    /// <summary>Guarded form of <see cref="Read"/>. A blob can pass <see cref="LooksLikeCompoundFile"/>
+    /// on its first 8 bytes and still be truncated or corrupt beyond that header - MsgReader throws in
+    /// that case. Mirrors the try/catch EmlPreviewFunc.LoadMessage already applies around
+    /// MimeMessage.Load, so a bad .msg degrades the same way a bad .eml does instead of a bare 500.</summary>
+    internal static bool TryRead(byte[] bytes, out IMsgMessage? message)
+    {
+        try
+        {
+            message = Read(bytes);
+            return true;
+        }
+        catch (Exception)
+        {
+            message = null;
+            return false;
+        }
+    }
+
     /// <summary>Adapter over MsgReader. Not unit-tested — it is a thin mapping onto a
     /// third-party parser, verified against real blobs through the local Functions host.</summary>
     internal static IMsgMessage Read(byte[] bytes)
@@ -90,16 +108,27 @@ internal static class MsgProjection
         {
             Subject = message.Subject ?? "",
             From = message.Sender?.DisplayName ?? message.Sender?.Email ?? "",
-            To = message.GetEmailRecipients(MsgReader.Outlook.RecipientType.To, false, false) is string to && to.Length > 0
-                 ? [to] : Array.Empty<string>(),
-            Cc = message.GetEmailRecipients(MsgReader.Outlook.RecipientType.Cc, false, false) is string cc && cc.Length > 0
-                 ? [cc] : Array.Empty<string>(),
+            To = RecipientsOfType(message, MsgReader.Outlook.RecipientType.To),
+            Cc = RecipientsOfType(message, MsgReader.Outlook.RecipientType.Cc),
             Sent = message.SentOn,
             BodyHtml = string.IsNullOrWhiteSpace(message.BodyHtml) ? null : message.BodyHtml,
             BodyText = message.BodyText ?? "",
             Attachments = attachments
         };
     }
+
+    /// <summary>One array entry per recipient, matching how the .eml path renders
+    /// message.To/.Cc (EmlPreviewFunc.cs ServePreview). GetEmailRecipients(type, ...) was
+    /// tried first and rejected: verified against real blobs, it returns a single formatted
+    /// string covering every recipient of that type, so a message with several To/Cc
+    /// addresses collapsed into one array entry instead of several - a defect the .eml path
+    /// does not have. message.Recipients filtered by Type does not collapse them.</summary>
+    private static string[] RecipientsOfType(MsgReader.Outlook.Storage.Message message, MsgReader.Outlook.RecipientType type) =>
+        message.Recipients
+            .Where(r => r.Type == type)
+            .Select(r => string.IsNullOrWhiteSpace(r.DisplayName) ? r.Email ?? "" : $"{r.DisplayName} <{r.Email}>")
+            .Where(s => s.Length > 0)
+            .ToArray();
 
     private sealed class MsgReaderMessage : IMsgMessage
     {

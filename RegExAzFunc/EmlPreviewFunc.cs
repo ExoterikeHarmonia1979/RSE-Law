@@ -111,7 +111,11 @@ public class EmlPreviewFunc
 
         if (MsgProjection.LooksLikeCompoundFile(docBytes!))
         {
-            return new OkObjectResult(MsgProjection.ToPreview(MsgProjection.Read(docBytes!), Sanitize));
+            if (!MsgProjection.TryRead(docBytes!, out IMsgMessage? msg))
+            {
+                return UnreadableMessage(docName);
+            }
+            return new OkObjectResult(MsgProjection.ToPreview(msg!, Sanitize));
         }
 
         var (message, _, error) = await LoadMessage(request.StoragePath);
@@ -179,8 +183,11 @@ public class EmlPreviewFunc
 
         if (MsgProjection.LooksLikeCompoundFile(rawBytes!))
         {
-            IMsgMessage msg = MsgProjection.Read(rawBytes!);
-            foreach (MsgAttachment att in msg.Attachments)
+            if (!MsgProjection.TryRead(rawBytes!, out IMsgMessage? msg))
+            {
+                return UnreadableMessage(rawName);
+            }
+            foreach (MsgAttachment att in msg!.Attachments)
             {
                 if (!string.Equals(att.Name, attachmentName, StringComparison.OrdinalIgnoreCase)) { continue; }
 
@@ -260,6 +267,20 @@ public class EmlPreviewFunc
     }
 
     // ── Shared blob/MIME plumbing ────────────────────────────────────────
+
+    /// <summary>Same 415 shape LoadMessage returns for an unparseable .eml, reused for a
+    /// .msg that MsgProjection.TryRead could not parse (truncated or corrupt beyond the
+    /// OLE2 header LooksLikeCompoundFile checks).</summary>
+    private ObjectResult UnreadableMessage(string? blobName)
+    {
+        _logger.LogWarning("Blob {BlobName} is not parseable as a .msg message", blobName);
+        return new ObjectResult(new
+        {
+            error = "This file is not a readable email message.",
+            blob = Path.GetFileName(blobName)
+        })
+        { StatusCode = StatusCodes.Status415UnsupportedMediaType };
+    }
 
     /// <summary>
     /// Parses the blob as MIME.
