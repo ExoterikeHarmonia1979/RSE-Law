@@ -60,6 +60,22 @@ describe('flattenVisible', () => {
 
     expect(rows.map((r) => r.depth)).toEqual([0, 1, 2]);
   });
+
+  it('places a "more" row after an inner folder\'s children, at the inner folder\'s depth, while the outer folder (no cursor) gets none of its own', () => {
+    const rows = flattenVisible([
+      folder('120.057', {
+        expanded: true,
+        children: [
+          folder('Emails', { expanded: true, children: [file('a.eml')], cursor: 'inner-token' })
+        ]
+      })
+    ]);
+
+    expect(rows.map((r) => r.node.name)).toEqual(['120.057', 'Emails', 'a.eml', 'Emails']);
+    expect(rows.map((r) => r.kind)).toEqual(['folder', 'folder', 'eml', 'more']);
+    expect(rows.map((r) => r.depth)).toEqual([0, 1, 2, 2]);
+    expect(rows.filter((r) => r.kind === 'more')).toHaveLength(1);
+  });
 });
 
 describe('filterRoots', () => {

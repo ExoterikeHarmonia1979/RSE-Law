@@ -1,6 +1,31 @@
 import { HttpClient } from '@microsoft/sp-http';
 import { IListPage, IProbeResult, ITreeNode } from '../models/ITreeNode';
 
+// A file's kind straight off the wire is only ever trusted if it is one of these —
+// anything else (a new kind the function starts sending, a typo, a missing field)
+// degrades to 'other' rather than smuggling an unrecognized value past the type
+// system, the same way AzureSearchService's toEmailItem trusts no field by default.
+const KNOWN_FILE_KINDS: ReadonlyArray<string> = ['eml', 'msg', 'attachment', 'other'];
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function str(item: any, field: string, fallback = ''): string {
+  const v = item[field];
+  return typeof v === 'string' ? v : fallback;
+}
+
+function num(item: any, field: string): number {
+  const v = Number(item[field]);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function fileKind(item: any): Exclude<ITreeNode['kind'], 'folder'> {
+  const v = item.kind;
+  return typeof v === 'string' && KNOWN_FILE_KINDS.indexOf(v) >= 0
+    ? (v as Exclude<ITreeNode['kind'], 'folder'>)
+    : 'other';
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 /**
  * Calls MattersBrowseFunc. The browse URL already carries the function key
  * (?code=...), which is why every parameter is appended with '&' — the same rule
@@ -22,20 +47,22 @@ export class BlobBrowseService {
     return {
       prefix: typeof json.prefix === 'string' ? json.prefix : prefix,
       folders: (Array.isArray(json.folders) ? json.folders : []).map(
-        (f: { name: string; path: string }): ITreeNode => ({
-          name: f.name,
-          path: f.path,
+        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+        (f: any): ITreeNode => ({
+          name: str(f, 'name'),
+          path: str(f, 'path'),
           kind: 'folder',
           expanded: false
         })
       ),
       files: (Array.isArray(json.files) ? json.files : []).map(
-        (f: { name: string; path: string; sizeBytes: number; lastModified: string; kind: ITreeNode['kind'] }): ITreeNode => ({
-          name: f.name,
-          path: f.path,
-          kind: f.kind,
-          sizeBytes: f.sizeBytes,
-          lastModified: f.lastModified
+        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+        (f: any): ITreeNode => ({
+          name: str(f, 'name'),
+          path: str(f, 'path'),
+          kind: fileKind(f),
+          sizeBytes: num(f, 'sizeBytes'),
+          lastModified: str(f, 'lastModified')
         })
       ),
       cursor: typeof json.cursor === 'string' && json.cursor ? json.cursor : undefined

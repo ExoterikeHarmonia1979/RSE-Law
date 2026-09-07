@@ -75,4 +75,52 @@ describe('BlobBrowseService', () => {
     expect(result.withinLimit).toBe(false);
     expect(result.files).toBe(2001);
   });
+
+  it('degrades a folder entry missing a path rather than throwing', async () => {
+    const http = fakeHttp({ prefix: '120.057/', folders: [{ name: 'Emails' }], files: [], cursor: null });
+    const service = new BlobBrowseService(http as never, BASE);
+
+    const page = await service.list('120.057/');
+
+    expect(page.folders[0]).toEqual(
+      expect.objectContaining({ name: 'Emails', path: '', kind: 'folder', expanded: false })
+    );
+  });
+
+  it('falls back to "other" for an unrecognized or non-string file kind', async () => {
+    const http = fakeHttp({
+      prefix: '120.057/',
+      folders: [],
+      files: [
+        { name: 'weird.xyz', path: 'https://samatters.blob.core.windows.net/matters/weird.xyz', kind: 'spreadsheet' },
+        { name: 'no-kind', path: 'https://samatters.blob.core.windows.net/matters/no-kind', kind: 42 }
+      ],
+      cursor: null
+    });
+    const service = new BlobBrowseService(http as never, BASE);
+
+    const page = await service.list('120.057/');
+
+    expect(page.files[0].kind).toBe('other');
+    expect(page.files[1].kind).toBe('other');
+  });
+
+  it('treats a non-numeric sizeBytes as 0 rather than NaN', async () => {
+    const http = fakeHttp({
+      prefix: '120.057/',
+      folders: [],
+      files: [{
+        name: 'a.eml',
+        path: 'https://samatters.blob.core.windows.net/matters/a.eml',
+        sizeBytes: 'not-a-number',
+        kind: 'eml'
+      }],
+      cursor: null
+    });
+    const service = new BlobBrowseService(http as never, BASE);
+
+    const page = await service.list('120.057/');
+
+    expect(page.files[0].sizeBytes).toBe(0);
+  });
 });
