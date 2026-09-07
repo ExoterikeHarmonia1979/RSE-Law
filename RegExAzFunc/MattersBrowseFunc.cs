@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using System.IO.Compression;
 
 namespace Company.Function;
 
@@ -57,6 +58,7 @@ public class MattersBrowseFunc
         {
             "list" => await ListAsync(container, prefix, req.Query["cursor"].ToString()),
             "probe" => await ProbeAsync(container, prefix),
+            "zip" => await ZipAsync(req, container, prefix),
             _ => new BadRequestObjectResult(new { error = $"Unknown op '{op}'." })
         };
     }
@@ -134,6 +136,69 @@ public class MattersBrowseFunc
             fileLimit = DownloadCap.MaxFiles,
             byteLimit = DownloadCap.MaxBytes
         });
+    }
+
+    // ── op=zip: the folder, streamed ─────────────────────────────────────
+
+    private async Task<IActionResult> ZipAsync(HttpRequest req, BlobContainerClient container, string prefix)
+    {
+        CapResult cap = await MeasureAsync(container, prefix);
+        if (!cap.WithinLimit)
+        {
+            // Counts are lower bounds here - the walk stopped at the cap. The client
+            // renders "more than N", never these numbers as a total.
+            return new ObjectResult(new
+            {
+                error = "That folder is too large to download in one archive.",
+                files = cap.Files,
+                bytes = cap.Bytes,
+                fileLimit = DownloadCap.MaxFiles,
+                byteLimit = DownloadCap.MaxBytes
+            })
+            { StatusCode = StatusCodes.Status413PayloadTooLarge };
+        }
+
+        HttpResponse response = req.HttpContext.Response;
+        response.StatusCode = StatusCodes.Status200OK;
+        response.ContentType = "application/zip";
+        response.Headers["Content-Disposition"] =
+            MattersBlobs.ContentDisposition("attachment", ZipNaming.ArchiveFileName(prefix));
+
+        var skipped = new List<string>();
+        await using (Stream body = response.BodyWriter.AsStream())
+        using (var archive = new ZipArchive(body, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            await foreach (BlobItem blob in container.GetBlobsAsync(prefix: prefix))
+            {
+                if (blob.Name.EndsWith('/')) { continue; }
+
+                string entryName = ZipNaming.EntryName(prefix, blob.Name);
+                try
+                {
+                    // Fastest, not Optimal: mail compresses, PDFs do not, and CPU is the
+                    // scarce resource on a Consumption plan.
+                    ZipArchiveEntry entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+                    await using Stream entryStream = entry.Open();
+                    await using Stream blobStream = await container.GetBlobClient(blob.Name).OpenReadAsync();
+                    await blobStream.CopyToAsync(entryStream);
+                }
+                catch (RequestFailedException ex)
+                {
+                    _logger.LogWarning(ex, "Skipping {BlobName} during zip of {Prefix}", blob.Name, prefix);
+                    skipped.Add(entryName);
+                }
+            }
+
+            if (skipped.Count > 0)
+            {
+                ZipArchiveEntry report = archive.CreateEntry("_download-errors.txt", CompressionLevel.Fastest);
+                await using Stream reportStream = report.Open();
+                await using var writer = new StreamWriter(reportStream);
+                await writer.WriteAsync(ZipNaming.ErrorManifest(skipped));
+            }
+        }
+
+        return new EmptyResult();   // the response has already been written
     }
 
     /// <summary>Flat walk of everything under the prefix. The stopping rule lives in
