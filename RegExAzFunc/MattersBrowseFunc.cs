@@ -56,6 +56,7 @@ public class MattersBrowseFunc
         return op switch
         {
             "list" => await ListAsync(container, prefix, req.Query["cursor"].ToString()),
+            "probe" => await ProbeAsync(container, prefix),
             _ => new BadRequestObjectResult(new { error = $"Unknown op '{op}'." })
         };
     }
@@ -118,5 +119,35 @@ public class MattersBrowseFunc
             files,
             cursor = string.IsNullOrEmpty(next) ? null : next
         });
+    }
+
+    // ── op=probe: is this folder within the cap? ─────────────────────────
+
+    private async Task<IActionResult> ProbeAsync(BlobContainerClient container, string prefix)
+    {
+        CapResult result = await MeasureAsync(container, prefix);
+        return new OkObjectResult(new
+        {
+            files = result.Files,
+            bytes = result.Bytes,
+            withinLimit = result.WithinLimit,
+            fileLimit = DownloadCap.MaxFiles,
+            byteLimit = DownloadCap.MaxBytes
+        });
+    }
+
+    /// <summary>Flat walk of everything under the prefix. The stopping rule lives in
+    /// DownloadCap, which DownloadCapTests pins — this only supplies the entries, lazily,
+    /// so abandoning the sequence early abandons the listing too.</summary>
+    private static Task<CapResult> MeasureAsync(BlobContainerClient container, string prefix) =>
+        DownloadCap.MeasureAsync(EnumerateAsync(container, prefix));
+
+    private static async IAsyncEnumerable<BlobEntry> EnumerateAsync(BlobContainerClient container, string prefix)
+    {
+        await foreach (BlobItem blob in container.GetBlobsAsync(prefix: prefix))
+        {
+            if (blob.Name.EndsWith('/')) { continue; }   // directory placeholder
+            yield return new BlobEntry(blob.Name, blob.Properties.ContentLength ?? 0);
+        }
     }
 }
