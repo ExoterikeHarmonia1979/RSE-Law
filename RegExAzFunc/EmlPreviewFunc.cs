@@ -4,10 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using MimeKit;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using static Company.Function.MattersBlobs;
 
 namespace Company.Function;
 
@@ -239,56 +239,7 @@ public class EmlPreviewFunc
         return !string.IsNullOrEmpty(dl) && dl != "0" && !string.Equals(dl, "false", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Strips what would break the Content-Disposition header, and the
-    /// path separators that would let a crafted attachment name suggest a
-    /// directory to the browser.</summary>
-    internal static string SanitizeFileName(string name) =>
-        Regex.Replace(name, @"[""\r\n\\/]", "_");
-
-    /// <summary>
-    /// Builds a Content-Disposition value that survives a non-ASCII file name.
-    /// <para>
-    /// HTTP header values are Latin-1. Assigning one containing 'ó' or an en-dash throws
-    /// inside Kestrel, the exception escapes the function, and the caller gets a bare 500
-    /// with an empty body - which is what the archive was doing to every message whose
-    /// subject had an accent or an Outlook-autocorrected dash. Spanish party names and
-    /// en-dashes are common in this corpus, so this was a large share of all downloads:
-    /// "109.108 Huey Samuel Napier v. Daniel Tile Inc. et al. - Intercambio de Información.eml"
-    /// failed every time while its plain-ASCII neighbours worked.
-    /// </para>
-    /// <para>
-    /// RFC 6266: send an ASCII-only <c>filename</c> that any client can read, plus
-    /// <c>filename*</c> with the real UTF-8 name percent-encoded per RFC 5987. Every current
-    /// browser prefers <c>filename*</c>, so the saved file keeps its accents.
-    /// </para>
-    /// </summary>
-    internal static string ContentDisposition(string disposition, string fileName)
-    {
-        string clean = SanitizeFileName(fileName);
-
-        // '?' rather than dropping the character, so the fallback keeps the name's shape for
-        // any client old enough to ignore filename*.
-        string ascii = Regex.Replace(clean, @"[^ -~]", "?");
-        if (string.IsNullOrWhiteSpace(ascii.Replace("?", ""))) { ascii = "download"; }
-
-        string encoded = Uri.EscapeDataString(clean);
-        return $"{disposition}; filename=\"{ascii}\"; filename*=UTF-8''{encoded}";
-    }
-
     // ── Shared blob/MIME plumbing ────────────────────────────────────────
-
-    /// <summary>
-    /// True when the blob is a mail message rather than a loose document.
-    /// <para>
-    /// The indexer's indexedFileNameExtensions covers .pdf, .docx, .htm and the rest, because
-    /// attachments are stored as their own blobs and the firm wants their contents searchable.
-    /// That means an attachment is its own document in the index, and the web part will happily
-    /// hand one of those to this function as if it were an email.
-    /// </para>
-    /// </summary>
-    internal static bool IsMailBlob(string blobName) =>
-        blobName.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) ||
-        blobName.EndsWith(".msg", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Parses the blob as MIME.
@@ -326,36 +277,23 @@ public class EmlPreviewFunc
     /// a MimeKit re-serialisation of them.</summary>
     private async Task<(byte[]? Bytes, string? BlobName, IActionResult? Error)> LoadBlobBytes(string storagePath)
     {
-        string blobUrl;
+        if (!MattersBlobs.TryResolveBlobName(storagePath, out string blobName, out string resolveError))
+        {
+            return (null, null, new BadRequestObjectResult(resolveError));
+        }
+
+        BlobContainerClient container;
         try
         {
-            blobUrl = DecodeStoragePath(storagePath);
+            container = MattersBlobs.GetContainer();
         }
-        catch (FormatException)
+        catch (InvalidOperationException ex)
         {
-            return (null, null, new BadRequestObjectResult("storagePath is not a valid URL or base64 token."));
+            return (null, null, new ObjectResult(new { error = ex.Message }) { StatusCode = 500 });
         }
-
-        string containerBase = Environment.GetEnvironmentVariable("MATTERS_CONTAINER_URL")
-            ?? "https://samatters.blob.core.windows.net/matters/";
-        if (!containerBase.EndsWith('/')) { containerBase += "/"; }
-        if (!blobUrl.StartsWith(containerBase, StringComparison.OrdinalIgnoreCase))
-        {
-            // Only serve blobs from the matters container, nothing else.
-            return (null, null, new BadRequestObjectResult("storagePath is outside the matters container."));
-        }
-
-        string connectionString = Environment.GetEnvironmentVariable("MATTERS_STORAGE_CONNECTION") ?? "";
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            return (null, null, new ObjectResult(new { error = "MATTERS_STORAGE_CONNECTION app setting is not configured." }) { StatusCode = 500 });
-        }
-
-        string blobName = Uri.UnescapeDataString(blobUrl.Substring(containerBase.Length));
 
         try
         {
-            var container = new BlobContainerClient(connectionString, "matters");
             using var stream = new MemoryStream();
             await container.GetBlobClient(blobName).DownloadToAsync(stream);
             return (stream.ToArray(), blobName, null);
@@ -369,48 +307,6 @@ public class EmlPreviewFunc
             _logger.LogError(ex, "Failed loading blob {BlobName}", blobName);
             return (null, null, new ObjectResult(new { error = ex.Message }) { StatusCode = 500 });
         }
-    }
-
-    /// <summary>Decodes the indexer's base64Encode key format
-    /// (UrlTokenEncode: url-safe alphabet + trailing padding-count digit),
-    /// or passes a plain URL through.</summary>
-    internal static string DecodeStoragePath(string value)
-    {
-        if (value.StartsWith("http://") || value.StartsWith("https://"))
-        {
-            return value;
-        }
-        if (value.Length < 2) { throw new FormatException("Token too short."); }
-        int padding = value[^1] - '0';
-        if (padding < 0 || padding > 2) { throw new FormatException("Bad padding digit."); }
-        string b64 = value[..^1].Replace('-', '+').Replace('_', '/') + new string('=', padding);
-        return Encoding.UTF8.GetString(Convert.FromBase64String(b64));
-    }
-
-    internal static string InferContentType(string fileName)
-    {
-        string ext = Path.GetExtension(fileName).TrimStart('.').ToLowerInvariant();
-        return ext switch
-        {
-            "pdf" => "application/pdf",
-            "png" => "image/png",
-            "jpg" or "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "bmp" => "image/bmp",
-            "tif" or "tiff" => "image/tiff",
-            "txt" or "log" => "text/plain",
-            "htm" or "html" => "text/html",
-            "csv" => "text/csv",
-            "doc" => "application/msword",
-            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "xls" => "application/vnd.ms-excel",
-            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "ppt" => "application/vnd.ms-powerpoint",
-            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "zip" => "application/zip",
-            "eml" => "message/rfc822",
-            _ => "application/octet-stream"
-        };
     }
 
     /// <summary>Replaces cid: references with data: URIs so inline images
