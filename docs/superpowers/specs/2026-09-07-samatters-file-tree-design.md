@@ -155,8 +155,10 @@ resizes by drag, persisted in `localStorage` beside the existing search history.
 
 ### Tree behaviour
 
-Rows render through Fluent's virtualized `List` over a flat array of visible nodes derived
-from expansion state — the pattern the result list already uses. Virtualization is a
+Rows render through Fluent's virtualized `List` over a flat array of visible nodes
+derived from expansion state. This is a new pattern in this web part: the result list
+renders with `items.map()` and gets away with it because it pages 25 at a time. The
+tree cannot — the root alone is 1,519 rows. Virtualization is a
 requirement, not a refinement: 1,519 roots, and one folder with 201,356 children.
 
 Expanding fires `op=list`, 500 per page. Beyond that the tree appends an explicit
@@ -188,8 +190,9 @@ header would be the honest way to offer it, and is out of scope here.
 
 `.msg` outnumbers `.eml` in the container (362,523 to 334,612) because the ingested quarters
 landed as `.msg`. `EmlPreviewFunc.IsMailBlob()` accepts `.msg`, but `LoadMessage()` hands the
-bytes to `MimeMessage.Load`, and MimeKit cannot parse a compound file. `MsgReader 6.1.0` is
-already a `RegExAzFunc.csproj` dependency but is never referenced from `EmlPreviewFunc.cs`.
+bytes to `MimeMessage.Load`, and MimeKit cannot parse a compound file. `MsgReader` is **not** a dependency on `main` — the ingest branch adds it for the
+attachment-names skill, and that branch is unmerged. This work adds the package
+reference itself.
 So a `.msg` preview returns the guarded parse error today — live in search results now, and
 unavoidable once a tree invites people to click these files directly.
 
