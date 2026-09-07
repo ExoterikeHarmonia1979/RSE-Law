@@ -182,8 +182,11 @@ public class MattersBrowseFunc
                     await using Stream blobStream = await container.GetBlobClient(blob.Name).OpenReadAsync();
                     await blobStream.CopyToAsync(entryStream);
                 }
-                catch (RequestFailedException ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // Broad on purpose: a short zip with a manifest beats a silently short
+                    // zip. OperationCanceledException is the exception - the client hung up,
+                    // and writing a manifest into a stream nobody is reading is pointless.
                     _logger.LogWarning(ex, "Skipping {BlobName} during zip of {Prefix}", blob.Name, prefix);
                     skipped.Add(entryName);
                 }

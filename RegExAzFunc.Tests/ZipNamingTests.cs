@@ -56,4 +56,35 @@ public class ZipNamingTests
         Assert.Contains("Emails/a.eml", text);
         Assert.Contains("Emails/b.eml", text);
     }
+
+    [Fact]
+    public void ErrorManifest_names_a_single_skipped_file()
+    {
+        string text = ZipNaming.ErrorManifest(["Emails/Attachments/k1/brief.pdf"]);
+
+        Assert.Contains("1 file(s)", text);
+        Assert.Contains("Emails/Attachments/k1/brief.pdf", text);
+    }
+
+    [Fact]
+    public void ErrorManifest_explains_why_a_file_went_missing()
+    {
+        // The manifest is read by someone who never sees the storage exception - it has
+        // to say why a file that was just listed is now absent from the archive.
+        string text = ZipNaming.ErrorManifest(["Emails/a.eml"]);
+
+        Assert.Contains("could not be read", text);
+        Assert.Contains("deleted", text);
+    }
+
+    [Fact]
+    public void ErrorManifest_with_no_skips_still_produces_well_formed_text()
+    {
+        // ZipAsync only calls ErrorManifest when skipped.Count > 0 - production never
+        // reaches this branch - but the function is pure and total, so its behavior for
+        // an empty list is pinned here rather than left undefined.
+        string text = ZipNaming.ErrorManifest([]);
+
+        Assert.Contains("0 file(s)", text);
+    }
 }
