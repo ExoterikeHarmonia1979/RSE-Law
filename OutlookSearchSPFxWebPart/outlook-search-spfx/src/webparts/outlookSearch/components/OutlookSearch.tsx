@@ -6,12 +6,19 @@ import { AzureSearchService } from '../services/AzureSearchService';
 import { SearchBar } from './SearchBar';
 import { EmailList } from './EmailList';
 import { ReadingPane } from './ReadingPane';
+import { FileTree } from './FileTree';
+import { BlobBrowseService } from '../services/BlobBrowseService';
+import { emlDownloadUrl } from '../services/downloadUrls';
 import styles from './OutlookSearch.module.scss';
 
 const LIST_WIDTH_KEY = 'rse-outlookSearch-listWidth';
 const LIST_WIDTH_DEFAULT = 360;
 const LIST_WIDTH_MIN = 260;
 const READING_WIDTH_MIN = 320;
+
+const TREE_WIDTH_KEY = 'rse-outlookSearch-treeWidth';
+const TREE_WIDTH_DEFAULT = 280;
+const TREE_WIDTH_MIN = 200;
 
 function clampWidth(w: number, containerWidth: number): number {
   const max = Math.max(LIST_WIDTH_MIN, containerWidth - READING_WIDTH_MIN);
@@ -46,7 +53,7 @@ function sortByDateDesc(items: IEmailItem[]): IEmailItem[] {
 }
 
 const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
-  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl } = props;
+  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl, browseFuncUrl } = props;
 
   const service = React.useMemo(
     () => new AzureSearchService(httpClient, {
@@ -57,6 +64,11 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       suggesterName
     }),
     [httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName]
+  );
+
+  const browseService = React.useMemo(
+    () => new BlobBrowseService(httpClient, browseFuncUrl),
+    [httpClient, browseFuncUrl]
   );
 
   const [query, setQuery] = React.useState('');
@@ -120,6 +132,55 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       return next;
     });
   }, [saveListWidth]);
+
+  // ── Adjustable split for the file tree pane ──
+  const [treeWidth, setTreeWidth] = React.useState<number>(() => {
+    const raw = window.localStorage.getItem(TREE_WIDTH_KEY);
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return isNaN(n) ? TREE_WIDTH_DEFAULT : n;
+  });
+  const treeDraggingRef = React.useRef(false);
+
+  const saveTreeWidth = React.useCallback((w: number): void => {
+    try { window.localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(w))); } catch { /* ignore */ }
+  }, []);
+
+  // The tree may take at most what it can leave the other two panes.
+  const clampTreeWidth = React.useCallback((w: number, containerWidth: number): number => {
+    const max = Math.max(TREE_WIDTH_MIN, containerWidth - LIST_WIDTH_MIN - READING_WIDTH_MIN);
+    return Math.min(Math.max(w, TREE_WIDTH_MIN), max);
+  }, []);
+
+  const onTreeSplitterPointerDown = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    treeDraggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, []);
+
+  const onTreeSplitterPointerMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!treeDraggingRef.current || !panesRef.current) { return; }
+    const rect = panesRef.current.getBoundingClientRect();
+    setTreeWidth(clampTreeWidth(e.clientX - rect.left, rect.width));
+  }, [clampTreeWidth]);
+
+  const onTreeSplitterPointerUp = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!treeDraggingRef.current) { return; }
+    treeDraggingRef.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setTreeWidth((w) => { saveTreeWidth(w); return w; });
+  }, [saveTreeWidth]);
+
+  const onTreeSplitterKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
+    e.preventDefault();
+    const delta = e.key === 'ArrowLeft' ? -16 : 16;
+    const containerWidth = panesRef.current ? panesRef.current.getBoundingClientRect().width : 1200;
+    setTreeWidth((w) => {
+      const next = clampTreeWidth(w + delta, containerWidth);
+      saveTreeWidth(next);
+      return next;
+    });
+  }, [clampTreeWidth, saveTreeWidth]);
 
   // allowAuto is passed rather than read from sortPinned: the toggle handler sets that state
   // and searches in the same click, and a state update is not visible to this closure until
@@ -204,6 +265,22 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     }
   }, [service, emlPreviewUrl]);
 
+  // A tree row is a blob URL, not a search hit. Build the minimum IEmailItem the
+  // reading pane needs and let handleSelect do the rest.
+  const handleSelectPath = React.useCallback((path: string, name: string): void => {
+    handleSelect({
+      storagePath: path,
+      fileName: name,
+      from: '', to: '', cc: '', subject: name, date: '',
+      snippetHtml: '', bodyPreview: '', attachmentNames: []
+    });
+  }, [handleSelect]);
+
+  const handleDownloadPath = React.useCallback((path: string): void => {
+    if (!emlPreviewUrl) { return; }
+    window.location.href = emlDownloadUrl(emlPreviewUrl, path);
+  }, [emlPreviewUrl]);
+
   const getSuggestions = React.useCallback(
     (text: string): Promise<string[]> => service.suggest(text),
     [service]
@@ -237,6 +314,28 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       )}
 
       <div className={styles.panes} ref={panesRef} style={{ display: 'flex', flexDirection: 'row' }}>
+        {browseFuncUrl && (
+          <>
+            <FileTree
+              service={browseService}
+              width={treeWidth}
+              selectedPath={selected ? selected.storagePath : undefined}
+              onSelectMessage={handleSelectPath}
+              onDownloadFile={handleDownloadPath}
+            />
+            <div
+              className={styles.splitter}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize file tree"
+              tabIndex={0}
+              onPointerDown={onTreeSplitterPointerDown}
+              onPointerMove={onTreeSplitterPointerMove}
+              onPointerUp={onTreeSplitterPointerUp}
+              onKeyDown={onTreeSplitterKeyDown}
+            />
+          </>
+        )}
         <EmailList
           items={items}
           totalCount={totalCount}

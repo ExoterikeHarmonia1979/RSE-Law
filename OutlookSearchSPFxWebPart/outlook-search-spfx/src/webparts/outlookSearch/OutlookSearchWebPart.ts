@@ -20,6 +20,7 @@ export interface IOutlookSearchWebPartProps {
   suggesterName: string;
   pageSize: number;
   emlPreviewUrl: string;
+  browseFuncUrl: string;
 }
 
 export default class OutlookSearchWebPart extends BaseClientSideWebPart<IOutlookSearchWebPartProps> {
@@ -35,7 +36,8 @@ export default class OutlookSearchWebPart extends BaseClientSideWebPart<IOutlook
         apiVersion: this.properties.apiVersion || '2024-07-01',
         suggesterName: this.properties.suggesterName || '',
         pageSize: this.properties.pageSize || 25,
-        emlPreviewUrl: this.properties.emlPreviewUrl || ''
+        emlPreviewUrl: this.properties.emlPreviewUrl || '',
+        browseFuncUrl: this.properties.browseFuncUrl || ''
       }
     );
 
@@ -81,6 +83,11 @@ export default class OutlookSearchWebPart extends BaseClientSideWebPart<IOutlook
                   label: strings.EmlPreviewUrlLabel,
                   description: strings.EmlPreviewUrlDescription,
                   placeholder: 'https://regexazfunc.azurewebsites.net/api/EmlPreviewFunc?code=...'
+                }),
+                PropertyPaneTextField('browseFuncUrl', {
+                  label: strings.BrowseFuncUrlLabel,
+                  description: strings.BrowseFuncUrlDescription,
+                  placeholder: 'https://regexazfunc.azurewebsites.net/api/MattersBrowseFunc?code=...'
                 })
               ]
             },

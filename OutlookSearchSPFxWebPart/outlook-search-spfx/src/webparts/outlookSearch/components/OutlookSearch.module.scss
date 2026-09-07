@@ -746,3 +746,10 @@ $text-secondary: #616161;
     text-decoration: underline;
   }
 }
+
+@media (max-width: 1100px) {
+  .treePane,
+  .treePane + .splitter {
+    display: none;
+  }
+}
