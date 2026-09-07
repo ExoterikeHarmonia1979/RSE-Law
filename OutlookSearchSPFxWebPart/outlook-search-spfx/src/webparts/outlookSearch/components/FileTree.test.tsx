@@ -10,7 +10,7 @@
 // test here renders JSX, so the class-name values themselves are never read.
 jest.mock('./OutlookSearch.module.scss', () => ({}), { virtual: true });
 
-import { formatSize, capMessage } from './FileTree';
+import { formatSize, capMessage, claimProbe, shouldContinuePaging } from './FileTree';
 
 describe('formatSize', () => {
   it('uses bytes below a kilobyte', () => {
@@ -44,5 +44,54 @@ describe('capMessage', () => {
     });
 
     expect(message).toContain('2.0 GB');
+  });
+});
+
+describe('claimProbe', () => {
+  it('claims an unheld path and adds it to the set', () => {
+    const inFlight = new Set<string>();
+
+    expect(claimProbe(inFlight, 'matters/120.057/')).toBe(true);
+    expect(inFlight.has('matters/120.057/')).toBe(true);
+  });
+
+  it('refuses a path someone else already holds, and leaves the set untouched', () => {
+    const inFlight = new Set<string>(['matters/120.057/']);
+
+    expect(claimProbe(inFlight, 'matters/120.057/')).toBe(false);
+    expect(inFlight.size).toBe(1);
+  });
+
+  it('does not let one folder\'s claim block a different folder\'s claim', () => {
+    const inFlight = new Set<string>(['matters/120.057/']);
+
+    expect(claimProbe(inFlight, 'matters/999.001/')).toBe(true);
+    expect(inFlight.has('matters/120.057/')).toBe(true);
+    expect(inFlight.has('matters/999.001/')).toBe(true);
+  });
+});
+
+describe('shouldContinuePaging', () => {
+  it('continues when there is a next cursor, it has not failed, and nothing is loading', () => {
+    expect(shouldContinuePaging('cursor-2', undefined, false)).toBe(true);
+  });
+
+  it('stops when there is no next cursor — the listing is complete', () => {
+    expect(shouldContinuePaging(undefined, undefined, false)).toBe(false);
+  });
+
+  it('stops while a fetch for it is already in flight', () => {
+    expect(shouldContinuePaging('cursor-2', undefined, true)).toBe(false);
+  });
+
+  it('stops once this exact cursor has already failed, even after loading clears', () => {
+    // This is the unbounded-retry case: a failed continuation flips loading back
+    // to false, and without this check the effect would refire on the same cursor
+    // forever.
+    expect(shouldContinuePaging('cursor-2', 'cursor-2', false)).toBe(false);
+  });
+
+  it('resumes once a different, later cursor is current — a past failure does not wedge paging forever', () => {
+    expect(shouldContinuePaging('cursor-3', 'cursor-2', false)).toBe(true);
   });
 });

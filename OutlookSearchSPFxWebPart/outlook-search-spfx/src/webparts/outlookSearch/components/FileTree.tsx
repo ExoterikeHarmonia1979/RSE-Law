@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { List, Icon, IconButton, SearchBox, Spinner, SpinnerSize, MessageBar, MessageBarType, Dialog, DialogType, DialogFooter, PrimaryButton } from '@fluentui/react';
+import { List, Icon, IconButton, SearchBox, Spinner, SpinnerSize, MessageBar, MessageBarType, MessageBarButton, Dialog, DialogType, DialogFooter, PrimaryButton } from '@fluentui/react';
 import { ITreeNode, ITreeRow, IProbeResult, flattenVisible, filterRoots } from '../models/ITreeNode';
 import { BlobBrowseService } from '../services/BlobBrowseService';
 import { fileTypeIcon, fileTypeColor } from './EmailList';
@@ -44,11 +44,43 @@ function updateFolder(nodes: ITreeNode[], path: string, change: (node: ITreeNode
   });
 }
 
+/**
+ * Claims `path` for an in-flight probe, mutating `inFlight` in place. Returns
+ * false — without adding anything — when a probe for this path is already
+ * running, so the caller can bail out before ever calling `probe()` or touching
+ * React state. Backed by a ref (not state) because a ref reads synchronously
+ * within the same click handler, even before React has re-rendered the button
+ * that would otherwise be the only thing stopping a second click.
+ */
+export function claimProbe(inFlight: Set<string>, path: string): boolean {
+  if (inFlight.has(path)) { return false; }
+  inFlight.add(path);
+  return true;
+}
+
+/**
+ * Whether the root-paging effect should fetch the next page. A continuation
+ * that has already failed for this exact cursor must not be retried just
+ * because `loading` flipped back to false — that flip is what a failure does,
+ * so retrying on it alone reissues the same failing request forever.
+ */
+export function shouldContinuePaging(
+  cursor: string | undefined,
+  failedCursor: string | undefined,
+  loading: boolean
+): boolean {
+  return !!cursor && cursor !== failedCursor && !loading;
+}
+
 export const FileTree: React.FC<IFileTreeProps> = (props) => {
   const { service, width, selectedPath, onSelectMessage, onDownloadFile } = props;
 
   const [roots, setRoots] = React.useState<ITreeNode[]>([]);
   const [rootCursor, setRootCursor] = React.useState<string | undefined>(undefined);
+  // The cursor a root-page fetch last failed on. Distinct from `error` (which is
+  // just display text) because the continuation effect needs to compare against
+  // the exact cursor it would otherwise retry — see shouldContinuePaging.
+  const [failedRootCursor, setFailedRootCursor] = React.useState<string | undefined>(undefined);
   const [filter, setFilter] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | undefined>(undefined);
@@ -56,6 +88,10 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
   // Per-folder probe-in-flight state, keyed by folder path. A plain Set (not global
   // boolean) so probing one folder never disables another row's download control.
   const [probing, setProbing] = React.useState<ReadonlySet<string>>(new Set());
+  // Mirrors `probing` synchronously. React state updates aren't visible until the
+  // next render, so a second click arriving before that render (same batch) would
+  // read stale state and re-enter; the ref is readable immediately.
+  const probingRef = React.useRef<Set<string>>(new Set());
 
   // Root level: 1,000 per page, so all 1,519 matters arrive in two calls.
   const loadRoots = React.useCallback((cursor?: string): void => {
@@ -64,18 +100,29 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
       .then((page) => {
         setRoots((prev) => prev.concat(page.folders).concat(page.files));
         setRootCursor(page.cursor);
+        setFailedRootCursor(undefined);
+        setError(undefined);
         setLoading(false);
       })
-      .catch((err: Error) => { setError(err.message); setLoading(false); });
+      .catch((err: Error) => {
+        setError(err.message);
+        setFailedRootCursor(cursor);
+        setLoading(false);
+      });
   }, [service]);
 
   React.useEffect(() => { loadRoots(); }, [loadRoots]);
 
   // Keep fetching root pages until the container root is complete; the filter box
-  // is only honest once every matter is in hand.
+  // is only honest once every matter is in hand. Stops once a cursor has already
+  // failed, rather than reissuing the same failing request on every render.
   React.useEffect(() => {
-    if (rootCursor && !loading) { loadRoots(rootCursor); }
-  }, [rootCursor, loading, loadRoots]);
+    if (shouldContinuePaging(rootCursor, failedRootCursor, loading)) { loadRoots(rootCursor); }
+  }, [rootCursor, failedRootCursor, loading, loadRoots]);
+
+  // A deliberate retry of the page that failed — the only way that cursor is
+  // fetched again once shouldContinuePaging has stopped the automatic effect.
+  const retryRoots = React.useCallback((): void => { loadRoots(failedRootCursor); }, [loadRoots, failedRootCursor]);
 
   const loadChildren = React.useCallback((node: ITreeNode, cursor?: string): void => {
     setRoots((prev) => updateFolder(prev, node.path, (n) => ({ ...n, loading: true })));
@@ -85,6 +132,7 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
           ...n,
           loading: false,
           expanded: true,
+          error: undefined, // a successful fetch supersedes any earlier failure
           children: (n.children || []).concat(page.folders).concat(page.files),
           cursor: page.cursor
         })));
@@ -104,14 +152,19 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
   // shows a per-folder pending state while it is in flight — otherwise a click on
   // exactly the folders where the refusal dialog matters looks like nothing happened.
   const downloadFolder = React.useCallback((node: ITreeNode): void => {
+    // Bail before touching state or calling probe() — the ref is what actually
+    // stops re-entry; the visible spinner swap is just its side effect on the
+    // next render, not the guard itself.
+    if (!claimProbe(probingRef.current, node.path)) { return; }
+
     setProbing((prev) => {
-      if (prev.has(node.path)) { return prev; } // already probing this folder — ignore the re-click
       const next = new Set(prev);
       next.add(node.path);
       return next;
     });
 
     const clearProbing = (): void => {
+      probingRef.current.delete(node.path);
       setProbing((prev) => {
         if (!prev.has(node.path)) { return prev; }
         const next = new Set(prev);
@@ -149,6 +202,10 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
 
     const isFolder = kind === 'folder';
     const isProbing = isFolder && probing.has(node.path);
+    // Both the first expand and a 'load more' continuation set node.loading, so
+    // the row itself — not just the synthetic 'more' row — shows it is busy.
+    const isLoadingChildren = isFolder && node.loading === true;
+    const hasChildError = isFolder && !isLoadingChildren && !!node.error;
     const onRowClick = (): void => {
       if (isFolder) { toggleFolder(node); }
       else if (kind === 'eml' || kind === 'msg') { onSelectMessage(node.path, node.name); }
@@ -164,7 +221,16 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
         aria-expanded={isFolder ? node.expanded === true : undefined}
       >
         {isFolder
-          ? <Icon className={styles.treeChevron} iconName={node.expanded ? 'ChevronDown' : 'ChevronRight'} />
+          ? (isLoadingChildren
+            ? <Spinner className={styles.treeChevron} size={SpinnerSize.xSmall} />
+            : (
+              <Icon
+                className={styles.treeChevron}
+                iconName={hasChildError ? 'Warning' : (node.expanded ? 'ChevronDown' : 'ChevronRight')}
+                style={hasChildError ? { color: '#a4262c' } : undefined}
+                title={hasChildError ? node.error : undefined}
+              />
+            ))
           : <span className={styles.treeChevron} />}
         <Icon
           className={styles.treeIcon}
@@ -201,7 +267,14 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
         onClear={() => setFilter('')}
       />
 
-      {error && <MessageBar messageBarType={MessageBarType.error}>{error}</MessageBar>}
+      {error && (
+        <MessageBar
+          messageBarType={MessageBarType.error}
+          actions={<MessageBarButton onClick={retryRoots}>Retry</MessageBarButton>}
+        >
+          {error}
+        </MessageBar>
+      )}
 
       <div className={styles.treeRows} role="tree">
         {loading && roots.length === 0
