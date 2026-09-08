@@ -294,7 +294,11 @@ def cmd_plan(args):
                                       'error': p[5] if len(p) > 5 else ''}
         print(f'resumed {len(resolved):,} already-resolved blobs from cache\n')
 
-    todo = [b for b in legacy if b not in resolved]
+    # A cached failure is retried. Most are URLError - a transient network blip, not a
+    # property of the blob - and leaving them cached would quietly turn a 2% hiccup into a
+    # permanent hole in the manifest, with the affected groups skipped every future run.
+    # A later row for the same blob overwrites the earlier one on load, so the retry wins.
+    todo = [b for b in legacy if b not in resolved or resolved[b].get('error')]
     if todo:
         print(f'reading {len(todo):,} header blocks at parallel {args.parallel} ...')
         done = 0
