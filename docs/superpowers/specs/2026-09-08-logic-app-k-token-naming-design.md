@@ -77,13 +77,43 @@ POST /api/DedupTokenFunc              body: raw .eml/.msg bytes
   -> 200 { "token": "k3f9a…", "messageId": "…", "sentUtc": "2026-03-20T21:52:57Z" }
   -> 422 { "error": "no Message-ID" }        identity not derivable
 
-POST /api/DedupTokenFunc?batch=1      body: [{ "id": "…", "bytes": "<base64>" }, …]
+POST /api/DedupTokenFunc?from=fields  body: [{ "id": "…", "messageId": "…",
+                                               "sentDateTime": "2026-03-20T21:52:57Z" }, …]
   -> 200 [{ "id": "…", "token": "k…" }, …]
 ```
 
-The batch form exists because the predictors call the Function rather than reimplementing:
-a 30,000-message sweep would otherwise be 30,000 round trips. It reads only the header
-block of each item.
+### The sweeps get the cheap route the pipeline cannot have
+
+The two endpoints exist because the callers can tolerate different things, and flattening
+them into one would either cripple the sweeps or endanger the pipeline.
+
+A sweep decides "is this message already archived?" by building a set of identifiers from
+blob names — `\[([^\]]+)\]\.eml$`, which already captures `k`-tokens as readily as legacy
+tails, so that side needs no change — and then computing the identifier for each Graph
+message. Computing it from raw bytes would mean fetching `$value` for every message in a
+198,000-message walk. That is not affordable.
+
+`sentDateTime` comes free in the `$select` the sweeps already issue. It is not safe for the
+pipeline, where a wrong token writes a mis-named blob and creates a real duplicate. It **is**
+safe for a sweep, because of an asymmetry worth stating plainly:
+
+> A sweep that computes the wrong token sees a false "missing" and re-queues the message.
+> The Logic App then archives it under the **authoritative** token — the same name it
+> already has — and overwrites. The `k`-token is idempotent by construction: same message,
+> same name, same matter. A sweep's wrong token costs bandwidth, never a duplicate.
+
+Both endpoints share one normalisation-and-hash implementation, so "one implementation"
+still holds; only the source of the two inputs differs.
+
+**Before either is wired up, measure how often `sentDateTime` disagrees with the `Date:`
+header.** If they agree, the sweeps are exact. If they disagree often, every sweep
+re-queues most of the recent corpus — a throughput regression that should be known before
+shipping rather than discovered in production. The measurement is a task in the plan, and
+it gates the design rather than decorating it.
+
+Rejected: matching on Message-ID alone, which would need no date and no hash. It collides
+on 3,835 groups in this corpus, and a false "already archived" **drops a message**. That is
+the one failure this archive cannot tolerate; a redundant re-archive is merely wasteful.
 
 ### One implementation, not three
 
@@ -193,6 +223,11 @@ design changes: the fallback would become the norm, and the alternative is the G
 
 **The 500 KB per message figure is the ingest's measured average item size**, not a
 measurement of this pipeline's traffic. Actual cost may differ.
+
+**Whether Graph's `sentDateTime` matches the `Date:` header is unmeasured**, and the
+sweeps' efficiency rests entirely on it. Nothing breaks if they disagree — the idempotency
+argument above holds either way — but the sweeps would re-queue most of the recent corpus
+on every run. Measure before wiring, not after.
 
 **The blast radius of a wrong token is larger than it looks.** A message named under a
 token that disagrees with the ingest's is not merely a duplicate — it is a duplicate whose
