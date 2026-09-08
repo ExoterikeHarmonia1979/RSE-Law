@@ -10,4 +10,6 @@ export interface IOutlookSearchProps {
   pageSize: number;
   /** EmlPreviewFunc endpoint incl. ?code= key; empty = plain-text fallback. */
   emlPreviewUrl: string;
+  /** MattersBrowseFunc endpoint incl. ?code= key; empty hides the file tree. */
+  browseFuncUrl: string;
 }
