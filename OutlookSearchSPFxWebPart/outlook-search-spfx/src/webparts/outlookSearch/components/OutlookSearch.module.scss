@@ -671,6 +671,12 @@ $text-secondary: #616161;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Without this the pane ignores its flex-basis entirely. A flex item defaults to
+     min-width:auto, so it cannot shrink below its content's minimum width - and the
+     rows are white-space:nowrap over .msg names 140 characters long. The pane then
+     grows to fit the longest filename and pushes the list and reading panes off
+     screen. .listPane carries the same line for the same reason. */
+  min-width: 0;
   border-right: 1px solid $border;
 }
 
