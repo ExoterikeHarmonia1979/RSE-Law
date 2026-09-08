@@ -64,7 +64,7 @@ the web part property pane set:
 | Query API key | a **query** key (never an admin key) |
 | API version | `2024-07-01` |
 | Suggester name | `sg` |
-| File tree service URL | the `MattersBrowseFunc` endpoint, `?code=` key included; leave empty to hide the tree pane. Same cap as `EmlPreviewFunc` — 2,000 files / 2 GB per archive — and needs the same `MATTERS_STORAGE_CONNECTION` and `MATTERS_CONTAINER_URL` app settings. |
+| File tree service URL | the `MattersBrowseFunc` endpoint, `?code=` key included; leave empty to hide the tree pane. `MattersBrowseFunc` caps a single archive at 2,000 files / 2 GB — `EmlPreviewFunc` has no such cap — and needs the same `MATTERS_STORAGE_CONNECTION` and `MATTERS_CONTAINER_URL` app settings. |
 
 > The query key is stored in the web part properties, i.e. visible to any user
 > who can view the page source. Query keys can only read the index — that is the
