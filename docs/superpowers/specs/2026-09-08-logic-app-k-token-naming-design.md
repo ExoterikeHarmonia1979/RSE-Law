@@ -224,10 +224,16 @@ design changes: the fallback would become the norm, and the alternative is the G
 **The 500 KB per message figure is the ingest's measured average item size**, not a
 measurement of this pipeline's traffic. Actual cost may differ.
 
-**Whether Graph's `sentDateTime` matches the `Date:` header is unmeasured**, and the
-sweeps' efficiency rests entirely on it. Nothing breaks if they disagree — the idempotency
-argument above holds either way — but the sweeps would re-queue most of the recent corpus
-on every run. Measure before wiring, not after.
+**Measured 2026-09-08**, sample of 200 messages from `matters@rse-law.com` (via
+`tools/check-sentdate-agreement.ps1`): Graph's `sentDateTime` agreed with the `Date:`
+header to the second in all 192 comparable messages — **192/192, 100.0%, zero
+disagreements**. 8 of the 200 sampled (4.0%) had no parseable `Date:` header in the first
+64 KB fetched and were excluded rather than counted as disagreement, consistent with the
+archive-wide 0.052% no-header rate measured on ingested `.eml`/`.msg` blobs (those blobs
+already survived the pipeline; this sample is raw Graph traffic, so a somewhat higher rate
+here is expected). At this sample size the sweeps' cheap `$select` route is exact; the
+idempotency argument above remains the reason a future disagreement would still be safe,
+not the reason this one is.
 
 **The blast radius of a wrong token is larger than it looks.** A message named under a
 token that disagrees with the ingest's is not merely a duplicate — it is a duplicate whose
