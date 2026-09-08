@@ -35,6 +35,22 @@ export function capMessage(result: IProbeResult): string {
        + `which is too much for a single archive. Open a folder inside it and download that instead.`;
 }
 
+/** What the probe dialog shows. Two distinct outcomes, each with its own title, so an
+ * expired function key or a network fault is never told to the user as "too large" — a
+ * real size refusal is the only thing that title may ever describe. */
+export interface IProbeNotice {
+  title: string;
+  message: string;
+}
+
+export function capRefusalNotice(result: IProbeResult): IProbeNotice {
+  return { title: 'Too large to download', message: capMessage(result) };
+}
+
+export function probeFailureNotice(err: Error): IProbeNotice {
+  return { title: 'Could not check that folder', message: err.message };
+}
+
 /** Replaces the node at `path` (a folder prefix) inside the tree, without mutating. */
 function updateFolder(nodes: ITreeNode[], path: string, change: (node: ITreeNode) => ITreeNode): ITreeNode[] {
   return nodes.map((node) => {
@@ -84,7 +100,11 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
   const [filter, setFilter] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | undefined>(undefined);
-  const [refusal, setRefusal] = React.useState<string | undefined>(undefined);
+  // Either a real cap refusal or a probe that failed outright (auth, network, throttling).
+  // Kept as one state slot with its own title per outcome — see IProbeNotice — rather
+  // than two booleans, so the dialog can never show one outcome's title over the other's
+  // message.
+  const [notice, setNotice] = React.useState<IProbeNotice | undefined>(undefined);
   // Per-folder probe-in-flight state, keyed by folder path. A plain Set (not global
   // boolean) so probing one folder never disables another row's download control.
   const [probing, setProbing] = React.useState<ReadonlySet<string>>(new Set());
@@ -175,11 +195,11 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
 
     service.probe(node.path)
       .then((result) => {
-        if (!result.withinLimit) { setRefusal(capMessage(result)); clearProbing(); return; }
+        if (!result.withinLimit) { setNotice(capRefusalNotice(result)); clearProbing(); return; }
         window.location.href = service.zipUrl(node.path);
         clearProbing();
       })
-      .catch((err: Error) => { setRefusal(err.message); clearProbing(); });
+      .catch((err: Error) => { setNotice(probeFailureNotice(err)); clearProbing(); });
   }, [service]);
 
   const visible = React.useMemo(
@@ -217,7 +237,9 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
         className={node.path === selectedPath ? `${styles.treeRow} ${styles.treeRowSelected}` : styles.treeRow}
         style={indent}
         onClick={onRowClick}
-        role="treeitem"
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(); } }}
+        role="listitem"
+        tabIndex={0}
         aria-expanded={isFolder ? node.expanded === true : undefined}
       >
         {isFolder
@@ -276,20 +298,26 @@ export const FileTree: React.FC<IFileTreeProps> = (props) => {
         </MessageBar>
       )}
 
-      <div className={styles.treeRows} role="tree">
+      {/* role="list"/"listitem", not "tree"/"treeitem": Fluent's List inserts its own
+          ms-List / ms-List-page wrapper divs between this container and each row, which
+          breaks the ARIA tree parent/child relationship regardless of what the rows
+          themselves carry. list/listitem tolerates the intervening wrappers - the same
+          pattern EmailList already uses successfully - while aria-expanded on folder
+          rows still says what a treeitem's would. */}
+      <div className={styles.treeRows} role="list">
         {loading && roots.length === 0
           ? <Spinner size={SpinnerSize.medium} label="Loading matters…" />
           : <List items={visible} onRenderCell={renderRow} />}
       </div>
 
       <Dialog
-        hidden={!refusal}
-        onDismiss={() => setRefusal(undefined)}
-        dialogContentProps={{ type: DialogType.normal, title: 'Too large to download' }}
+        hidden={!notice}
+        onDismiss={() => setNotice(undefined)}
+        dialogContentProps={{ type: DialogType.normal, title: notice ? notice.title : '' }}
       >
-        {refusal}
+        {notice ? notice.message : ''}
         <DialogFooter>
-          <PrimaryButton onClick={() => setRefusal(undefined)} text="OK" />
+          <PrimaryButton onClick={() => setNotice(undefined)} text="OK" />
         </DialogFooter>
       </Dialog>
     </div>

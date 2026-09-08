@@ -10,7 +10,7 @@
 // test here renders JSX, so the class-name values themselves are never read.
 jest.mock('./OutlookSearch.module.scss', () => ({}), { virtual: true });
 
-import { formatSize, capMessage, claimProbe, shouldContinuePaging } from './FileTree';
+import { formatSize, capMessage, capRefusalNotice, probeFailureNotice, claimProbe, shouldContinuePaging } from './FileTree';
 
 describe('formatSize', () => {
   it('uses bytes below a kilobyte', () => {
@@ -44,6 +44,28 @@ describe('capMessage', () => {
     });
 
     expect(message).toContain('2.0 GB');
+  });
+});
+
+// A folder that really is too large, and a probe that failed for some other reason
+// (an expired function key, a network fault, throttling), must never look the same
+// to the user — the dialog is titled from the outcome, not hard-coded to one of them.
+describe('capRefusalNotice and probeFailureNotice', () => {
+  it('titles a real cap refusal as too large, with the lower-bound message', () => {
+    const notice = capRefusalNotice({
+      files: 2001, bytes: 0, withinLimit: false, fileLimit: 2000, byteLimit: 2147483648
+    });
+
+    expect(notice.title).toBe('Too large to download');
+    expect(notice.message).toContain('more than 2,000 files');
+  });
+
+  it('titles a probe failure differently from a size refusal, carrying the real error', () => {
+    const notice = probeFailureNotice(new Error('Could not check that folder (HTTP 401)'));
+
+    expect(notice.title).not.toBe('Too large to download');
+    expect(notice.title).toBe('Could not check that folder');
+    expect(notice.message).toBe('Could not check that folder (HTTP 401)');
   });
 });
 
