@@ -1,0 +1,5 @@
+# Isolated workspaces for subagent-driven runs. Scratch, never source.
+.claude/worktrees/
+
+# Subagent-driven-development ledger and review packages.
+.superpowers/

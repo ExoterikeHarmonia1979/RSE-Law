@@ -12,6 +12,8 @@ declare interface IOutlookSearchWebPartStrings {
   PageSizeLabel: string;
   EmlPreviewUrlLabel: string;
   EmlPreviewUrlDescription: string;
+  BrowseFuncUrlLabel: string;
+  BrowseFuncUrlDescription: string;
 }
 
 declare module 'OutlookSearchWebPartStrings' {

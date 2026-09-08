@@ -6,6 +6,9 @@ import { AzureSearchService } from '../services/AzureSearchService';
 import { SearchBar } from './SearchBar';
 import { EmailList } from './EmailList';
 import { ReadingPane } from './ReadingPane';
+import { FileTree } from './FileTree';
+import { BlobBrowseService } from '../services/BlobBrowseService';
+import { emlDownloadUrl } from '../services/downloadUrls';
 import styles from './OutlookSearch.module.scss';
 
 const LIST_WIDTH_KEY = 'rse-outlookSearch-listWidth';
@@ -13,9 +16,42 @@ const LIST_WIDTH_DEFAULT = 360;
 const LIST_WIDTH_MIN = 260;
 const READING_WIDTH_MIN = 320;
 
+const TREE_WIDTH_KEY = 'rse-outlookSearch-treeWidth';
+const TREE_WIDTH_DEFAULT = 280;
+const TREE_WIDTH_MIN = 200;
+
 function clampWidth(w: number, containerWidth: number): number {
   const max = Math.max(LIST_WIDTH_MIN, containerWidth - READING_WIDTH_MIN);
   return Math.min(Math.max(w, LIST_WIDTH_MIN), max);
+}
+
+/** A rect's left edge and width — just enough of DOMRect to keep the pure functions
+ * below testable without a DOM. */
+export interface IPaneRect { left: number; width: number; }
+
+/**
+ * The list pane's target width for a pointer at `clientX`.
+ *
+ * `panesRect` is the .panes container's own rect; `listPaneLeft` is the list pane's
+ * *own* rendered left edge. Whatever the tree pane currently occupies — 280px when
+ * rendered, 0 when browseFuncUrl is empty and there is no tree at all, 0 again when
+ * the tree is configured but the 1100px breakpoint has hidden it — is already baked
+ * into listPaneLeft, because it was read off the live DOM rather than recomputed from
+ * treeWidth/browseFuncUrl state. That is what keeps this arithmetic from ever
+ * disagreeing with what the CSS actually rendered: a React-state-only check (e.g. "is
+ * browseFuncUrl set") cannot see the breakpoint hiding the tree, but the rendered rect
+ * always reflects it.
+ */
+export function listWidthForPointer(clientX: number, panesRect: IPaneRect, listPaneLeft: number): number {
+  const offset = listPaneLeft - panesRect.left;
+  return clampWidth(clientX - listPaneLeft, panesRect.width - offset);
+}
+
+/** The width available to [list pane + splitter + reading pane] — `panesRect.width`
+ * minus whatever the tree pane currently occupies (see listWidthForPointer). Used by
+ * the keyboard splitter handler, which has no pointer position to measure from. */
+export function listPaneAreaWidth(panesRect: IPaneRect, listPaneLeft: number): number {
+  return panesRect.width - (listPaneLeft - panesRect.left);
 }
 
 function loadListWidth(): number {
@@ -46,7 +82,7 @@ function sortByDateDesc(items: IEmailItem[]): IEmailItem[] {
 }
 
 const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
-  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl } = props;
+  const { httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName, pageSize, emlPreviewUrl, browseFuncUrl } = props;
 
   const service = React.useMemo(
     () => new AzureSearchService(httpClient, {
@@ -57,6 +93,11 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       suggesterName
     }),
     [httpClient, searchServiceUrl, indexName, apiKey, apiVersion, suggesterName]
+  );
+
+  const browseService = React.useMemo(
+    () => new BlobBrowseService(httpClient, browseFuncUrl),
+    [httpClient, browseFuncUrl]
   );
 
   const [query, setQuery] = React.useState('');
@@ -98,8 +139,14 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
 
   const onSplitterPointerMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
     if (!draggingRef.current || !panesRef.current) { return; }
-    const rect = panesRef.current.getBoundingClientRect();
-    setListWidth(clampWidth(e.clientX - rect.left, rect.width));
+    // Measured off the live DOM, not recomputed from treeWidth/browseFuncUrl — see
+    // listWidthForPointer's comment for why that is what keeps this correct when the
+    // tree pane is hidden by the 1100px breakpoint but browseFuncUrl is still set.
+    const listEl = panesRef.current.querySelector<HTMLElement>(`.${styles.listPane}`);
+    if (!listEl) { return; }
+    const panesRect = panesRef.current.getBoundingClientRect();
+    const listRect = listEl.getBoundingClientRect();
+    setListWidth(listWidthForPointer(e.clientX, panesRect, listRect.left));
   }, []);
 
   const onSplitterPointerUp = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
@@ -113,13 +160,67 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
     e.preventDefault();
     const delta = e.key === 'ArrowLeft' ? -16 : 16;
-    const containerWidth = panesRef.current ? panesRef.current.getBoundingClientRect().width : 1200;
+    let containerWidth = 1200;
+    if (panesRef.current) {
+      const panesRect = panesRef.current.getBoundingClientRect();
+      const listEl = panesRef.current.querySelector<HTMLElement>(`.${styles.listPane}`);
+      containerWidth = listEl ? listPaneAreaWidth(panesRect, listEl.getBoundingClientRect().left) : panesRect.width;
+    }
     setListWidth((w) => {
       const next = clampWidth(w + delta, containerWidth);
       saveListWidth(next);
       return next;
     });
   }, [saveListWidth]);
+
+  // ── Adjustable split for the file tree pane ──
+  const [treeWidth, setTreeWidth] = React.useState<number>(() => {
+    const raw = window.localStorage.getItem(TREE_WIDTH_KEY);
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return isNaN(n) ? TREE_WIDTH_DEFAULT : n;
+  });
+  const treeDraggingRef = React.useRef(false);
+
+  const saveTreeWidth = React.useCallback((w: number): void => {
+    try { window.localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(w))); } catch { /* ignore */ }
+  }, []);
+
+  // The tree may take at most what it can leave the other two panes.
+  const clampTreeWidth = React.useCallback((w: number, containerWidth: number): number => {
+    const max = Math.max(TREE_WIDTH_MIN, containerWidth - LIST_WIDTH_MIN - READING_WIDTH_MIN);
+    return Math.min(Math.max(w, TREE_WIDTH_MIN), max);
+  }, []);
+
+  const onTreeSplitterPointerDown = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    treeDraggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }, []);
+
+  const onTreeSplitterPointerMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!treeDraggingRef.current || !panesRef.current) { return; }
+    const rect = panesRef.current.getBoundingClientRect();
+    setTreeWidth(clampTreeWidth(e.clientX - rect.left, rect.width));
+  }, [clampTreeWidth]);
+
+  const onTreeSplitterPointerUp = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!treeDraggingRef.current) { return; }
+    treeDraggingRef.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setTreeWidth((w) => { saveTreeWidth(w); return w; });
+  }, [saveTreeWidth]);
+
+  const onTreeSplitterKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
+    e.preventDefault();
+    const delta = e.key === 'ArrowLeft' ? -16 : 16;
+    const containerWidth = panesRef.current ? panesRef.current.getBoundingClientRect().width : 1200;
+    setTreeWidth((w) => {
+      const next = clampTreeWidth(w + delta, containerWidth);
+      saveTreeWidth(next);
+      return next;
+    });
+  }, [clampTreeWidth, saveTreeWidth]);
 
   // allowAuto is passed rather than read from sortPinned: the toggle handler sets that state
   // and searches in the same click, and a state update is not visible to this closure until
@@ -204,6 +305,22 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     }
   }, [service, emlPreviewUrl]);
 
+  // A tree row is a blob URL, not a search hit. Build the minimum IEmailItem the
+  // reading pane needs and let handleSelect do the rest.
+  const handleSelectPath = React.useCallback((path: string, name: string): void => {
+    handleSelect({
+      storagePath: path,
+      fileName: name,
+      from: '', to: '', cc: '', subject: name, date: '',
+      snippetHtml: '', bodyPreview: '', attachmentNames: []
+    });
+  }, [handleSelect]);
+
+  const handleDownloadPath = React.useCallback((path: string): void => {
+    if (!emlPreviewUrl) { return; }
+    window.location.href = emlDownloadUrl(emlPreviewUrl, path);
+  }, [emlPreviewUrl]);
+
   const getSuggestions = React.useCallback(
     (text: string): Promise<string[]> => service.suggest(text),
     [service]
@@ -237,6 +354,28 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
       )}
 
       <div className={styles.panes} ref={panesRef} style={{ display: 'flex', flexDirection: 'row' }}>
+        {browseFuncUrl && (
+          <>
+            <FileTree
+              service={browseService}
+              width={treeWidth}
+              selectedPath={selected ? selected.storagePath : undefined}
+              onSelectMessage={handleSelectPath}
+              onDownloadFile={handleDownloadPath}
+            />
+            <div
+              className={styles.splitter}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize file tree"
+              tabIndex={0}
+              onPointerDown={onTreeSplitterPointerDown}
+              onPointerMove={onTreeSplitterPointerMove}
+              onPointerUp={onTreeSplitterPointerUp}
+              onKeyDown={onTreeSplitterKeyDown}
+            />
+          </>
+        )}
         <EmailList
           items={items}
           totalCount={totalCount}

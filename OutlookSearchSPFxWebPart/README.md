@@ -5,19 +5,19 @@ SharePoint Framework web part that reproduces the Outlook three-pane experience
 `samatters/matters` blob container and indexed by Azure AI Search.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  ▄ blue top bar          [ 🔍 Search           ]         │  SearchBar.tsx
-├───────────────────────┬──────────────────────────────────┤
-│ Results (1,234)  By Date ⌄ │  FW: 23-2209121- Please Review │
-│ ── Today ──────────── │  (SD) Scott Dallas               │
-│ (SD) Scott Dallas   📎 │  To: Daniel Eisenberg            │
-│  FW: 23-2209121-…     │  Cc: RSE Matters                 │
-│  snippet with <mark>… │  📎 Outlook-q3zocl…              │
-│ ── Yesterday ───────── │                                  │
-│ (MG) Marco Galindez   │  Hi Dan, I'm holding off on…     │
-│  …                    │  (email body + attachment text)  │
-└───────────────────────┴──────────────────────────────────┘
-  EmailList.tsx              ReadingPane.tsx
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ▄ blue top bar                    [ 🔍 Search           ]               │  SearchBar.tsx
+├─────────────────┬───────────────────────┬──────────────────────────────┤
+│ ▸ 120.057       │ Results (1,234)  By Date ⌄ │  FW: 23-2209121- Please Review │
+│   ▾ Emails      │ ── Today ──────────── │  (SD) Scott Dallas               │
+│     msg1.eml    │ (SD) Scott Dallas   📎 │  To: Daniel Eisenberg            │
+│     msg2.msg    │  FW: 23-2209121-…     │  Cc: RSE Matters                 │
+│   ▸ Attachments │  snippet with <mark>… │  📎 Outlook-q3zocl…              │
+│ ▸ 120.058       │ ── Yesterday ───────── │                                  │
+│ ▸ Unsorted…     │ (MG) Marco Galindez   │  Hi Dan, I'm holding off on…     │
+│                 │  …                    │  (email body + attachment text)  │
+└─────────────────┴───────────────────────┴──────────────────────────────┘
+  FileTree.tsx        EmailList.tsx              ReadingPane.tsx
 ```
 
 ## Solution layout
@@ -28,8 +28,10 @@ SharePoint Framework web part that reproduces the Outlook three-pane experience
 | `…/services/AzureSearchService.ts` | All Azure AI Search REST calls via SPFx `HttpClient` |
 | `…/services/OutlookQueryParser.ts` | Outlook search-syntax → Lucene + OData `$filter` |
 | `…/components/SearchBar.tsx` | Outlook search bar: type-ahead, recents, keyboard nav |
-| `…/components/EmailList.tsx` | Left pane: date-grouped result list |
+| `…/components/EmailList.tsx` | Middle pane: date-grouped result list |
 | `…/components/ReadingPane.tsx` | Right pane: metadata header + extracted text preview |
+| `…/components/FileTree.tsx` | Left pane: browsable tree of the raw blob container |
+| `…/services/BlobBrowseService.ts` | All `MattersBrowseFunc` REST calls (list/probe/zip) via SPFx `HttpClient` |
 | `azure/` | Scripts + JSON to provision the new search service |
 
 ## Search bar behavior (mirrors Outlook)
@@ -62,6 +64,7 @@ the web part property pane set:
 | Query API key | a **query** key (never an admin key) |
 | API version | `2024-07-01` |
 | Suggester name | `sg` |
+| File tree service URL | the `MattersBrowseFunc` endpoint, `?code=` key included; leave empty to hide the tree pane. `MattersBrowseFunc` caps a single archive at 2,000 files / 2 GB — `EmlPreviewFunc` has no such cap — and needs the same `MATTERS_STORAGE_CONNECTION` and `MATTERS_CONTAINER_URL` app settings. |
 
 > The query key is stored in the web part properties, i.e. visible to any user
 > who can view the page source. Query keys can only read the index — that is the

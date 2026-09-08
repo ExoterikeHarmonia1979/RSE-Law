@@ -12,6 +12,8 @@ define([], function() {
     "SuggesterNameDescription": "Name of the suggester defined on the index (leave empty to disable type-ahead).",
     "PageSizeLabel": "Results per page",
     "EmlPreviewUrlLabel": "EML preview service URL",
-    "EmlPreviewUrlDescription": "EmlPreviewFunc endpoint including its ?code= function key. Renders the original email HTML; leave empty to show plain extracted text."
+    "EmlPreviewUrlDescription": "EmlPreviewFunc endpoint including its ?code= function key. Renders the original email HTML; leave empty to show plain extracted text.",
+    "BrowseFuncUrlLabel": "File tree service URL",
+    "BrowseFuncUrlDescription": "MattersBrowseFunc endpoint including its ?code= function key. Shows the storage account as a browsable tree; leave empty to hide the tree pane."
   }
 });
