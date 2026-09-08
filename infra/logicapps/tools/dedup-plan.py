@@ -495,9 +495,22 @@ def cmd_review(args):
         biggest = sorted(groups, key=lambda t: -len(groups[t]))[:200]
         per = max(1, args.sample // 3)
         chosen = []
-        for pool in (mixed, legacy_only, biggest):
+        pools = [mixed, legacy_only, biggest]
+        for pool in pools:
             rnd.shuffle(pool)
             chosen += [t for t in pool if t not in chosen][:per]
+        # Three strata of sample//3 leave a remainder, so asking for 100 used to return 99
+        # with nothing said about the missing one. Top up from whichever pools still have
+        # groups until the requested count is met or the pools are exhausted.
+        if len(chosen) < args.sample:
+            picked = set(chosen)
+            for pool in pools:
+                for t in pool:
+                    if len(chosen) >= args.sample:
+                        break
+                    if t not in picked:
+                        chosen.append(t)
+                        picked.add(t)
         chosen = chosen[:args.sample]
 
     print(f'{len(groups):,} planned groups; showing {len(chosen)}'
