@@ -558,6 +558,104 @@ def cmd_review(args):
     return 0
 
 
+def blob_ext(blob_name):
+    """.msg or .eml, off the blob name alone - never guessed from content.
+
+    Used only to label a mismatch. A real mismatch here is far more likely to be the
+    untested .msg precedence rules (MAPI messageId fallback, Date-vs-SentOn) than a
+    freak blob, so the report needs to say which route produced the disagreeing blob,
+    not just that one exists.
+    """
+    return blob_name.rsplit('.', 1)[-1].lower() if '.' in blob_name else '?'
+
+
+def cmd_conformance(args):
+    """Check the deployed Function reproduces the tokens in real ingested blob names.
+
+    selftest proves ingest-key.py still agrees with what it wrote. This proves the C#
+    Function agrees too - the claim that lets the pipeline and the ingest share one
+    identity. Sends only headers, never whole messages.
+    """
+    import urllib.error
+    import urllib.request
+    key_mod = load_ingest_key()
+    storage = Storage()
+
+    named = []
+    with open(args.index, encoding='utf-8') as fh:
+        fh.readline()
+        for line in fh:
+            blob = line.split('\t', 1)[0]
+            if token_from_name(blob):
+                named.append(blob)
+            if len(named) >= args.sample * 4:
+                break
+    sample = named[::4][:args.sample]
+    print(f'checking {len(sample)} ingested blobs against {args.func}\n')
+
+    ok = bad = failed = 0
+    bad_by_ext = {}
+    for i, blob in enumerate(sample, 1):
+        expected = token_from_name(blob)
+        ext = blob_ext(blob)
+        try:
+            raw, _, _ = storage.head_bytes_sized(blob, 40 * 1024 * 1024)
+        except Exception as e:                                    # noqa: BLE001
+            failed += 1
+            print(f'  [{i}/{len(sample)}] fetch failed ({type(e).__name__}) .{ext} {blob}')
+            continue
+        req = urllib.request.Request(args.func, data=raw,
+                                     headers={'Content-Type': 'application/octet-stream'})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                got = json.loads(resp.read()).get('token')
+        except urllib.error.HTTPError as e:
+            failed += 1
+            print(f'  [{i}/{len(sample)}] function call failed (HTTP {e.code}) .{ext} {blob}')
+            continue
+        except (urllib.error.URLError, ValueError) as e:
+            # Not an HTTP error response from the Function - the URL itself could not be
+            # reached at all (DNS, connection refused, timeout, or a malformed --func).
+            # Retrying the rest of the sample against a dead URL would just repeat this
+            # forty times and look like a hang; say what is wrong, once, and stop.
+            print(f'\ncould not reach {args.func}\n  {getattr(e, "reason", e)}\n'
+                  f'Checked {i - 1} of {len(sample)} before this. Confirm the Function is '
+                  f'deployed and --func (including ?code=) is correct, then re-run.')
+            return 1
+        except Exception as e:                                    # noqa: BLE001
+            failed += 1
+            print(f'  [{i}/{len(sample)}] function call failed ({type(e).__name__}) .{ext} {blob}')
+            continue
+        if got == expected:
+            ok += 1
+        else:
+            bad += 1
+            bad_by_ext[ext] = bad_by_ext.get(ext, 0) + 1
+            print(f'  [{i}/{len(sample)}] MISMATCH .{ext}  name={expected}  function={got}\n'
+                  f'           {blob}')
+
+    print(f'\nmatched {ok}, mismatched {bad}, unreadable {failed}')
+    if bad:
+        breakdown = ', '.join(f'{n} .{ext}' for ext, n in sorted(bad_by_ext.items()))
+        print(f'  mismatches by route: {breakdown}')
+        if bad_by_ext.get('msg') and not bad_by_ext.get('eml'):
+            print('  All mismatches are .msg: look at the MAPI messageId fallback and the\n'
+                  '  Date-vs-SentOn precedence in DedupToken.FromBytes - those two rules have\n'
+                  '  no unit test and this sample is the only thing that has ever exercised\n'
+                  '  them against real mail. This is not a strange blob.')
+        elif bad_by_ext.get('eml') and not bad_by_ext.get('msg'):
+            print('  All mismatches are .eml: the MIME branch of DedupToken.FromBytes or its\n'
+                  '  Message-ID/Date header handling is the more likely place to look.')
+        print('\nThe Function does not reproduce the tokens already in the container.\n'
+              'Do not wire anything to it until this is understood.')
+        return 1
+    if not ok:
+        print('\nNothing verified. Treat the Function as unproven.')
+        return 1
+    print('\nThe Function agrees with the names already in the container.')
+    return 0
+
+
 def main():
     # The Windows console is cp1252, and these subjects are not. A single emoji in one
     # subject killed a review run at group 16 of 30 with UnicodeEncodeError - the same
@@ -588,9 +686,18 @@ def main():
     rv.add_argument('--group', help='inspect one token instead of a sample')
     rv.add_argument('--seed', type=int, default=1, help='same seed gives the same sample')
 
+    cf = sub.add_parser('conformance', help='check the deployed Function against real blob names')
+    cf.add_argument('--sample', type=int, default=40)
+    cf.add_argument('--index', default=INDEX)
+    cf.add_argument('--func', required=True, help='DedupTokenFunc URL including ?code=')
+
     args = ap.parse_args()
     if args.cmd == 'review':
         return cmd_review(args)
+    if args.cmd == 'conformance':
+        if not os.path.exists(args.index):
+            sys.exit(f'no Message-ID index at {args.index}')
+        return cmd_conformance(args)
     if not os.path.exists(args.index):
         sys.exit(f'no Message-ID index at {args.index}\n'
                  f'It is a gitignored build artefact - pass --index <path> to the copy you\n'
