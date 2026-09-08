@@ -20,3 +20,8 @@ purged-documents-*.json
 # message identifiers to matter paths - not something to commit.
 messageid-index.tsv
 older-mail-*.csv
+
+# Dry-run artefacts for the duplicate cleanup. Both list real blob paths, which carry
+# matter numbers and message subjects - operational scratch, never source.
+dedup-manifest*.tsv
+dedup-resolved.tsv
