@@ -120,6 +120,17 @@ class Storage:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return resp.read(), resp.headers.get('Last-Modified', '')
 
+    def head_bytes_sized(self, blob_name, n):
+        """As head_bytes, plus the blob's full size read off Content-Range."""
+        req = urllib.request.Request(self.url(blob_name))
+        req.add_header('Authorization', f'Bearer {self.token()}')
+        req.add_header('x-ms-version', API_VERSION)
+        req.add_header('Range', f'bytes=0-{n - 1}')
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            rng = resp.headers.get('Content-Range', '')        # 'bytes 0-16383/238160'
+            total = int(rng.rsplit('/', 1)[1]) if '/' in rng else 0
+            return resp.read(), resp.headers.get('Last-Modified', ''), total
+
 
 # ── identity resolution ──────────────────────────────────────────────────────────────────
 
@@ -382,7 +393,169 @@ def cmd_plan(args):
     return 0
 
 
+def decode_words(value):
+    """Decode RFC 2047 encoded-words, e.g. '=?Windows-1252?Q?RE:_Medical_=97_RSE?='.
+
+    The .msg side hands back the raw encoded form where the .eml side of the same message
+    hands back the decoded one, so comparing them undecoded reports a difference that is
+    only an encoding. Anything unparseable is returned as-is rather than discarded.
+    """
+    if not value or '=?' not in value:
+        return value or ''
+    try:
+        import email.header
+        return str(email.header.make_header(email.header.decode_header(value)))
+    except Exception:                                             # noqa: BLE001
+        return value
+
+
+def describe_blob(storage, key_mod, blob_name):
+    """Subject / sender / sent date / size for one blob, whichever scheme it uses.
+
+    Only ever reads metadata. Bodies are never printed - the point is to let a person
+    judge whether the survivor and the copies really are one message, which the headers
+    settle without putting correspondence on screen.
+    """
+    import email
+    import tempfile
+    from email import policy
+
+    if token_from_name(blob_name):                     # ingested .msg: needs the whole file
+        try:
+            raw, _, total = storage.head_bytes_sized(blob_name, 40 * 1024 * 1024)
+        except Exception as e:                                    # noqa: BLE001
+            return {'error': type(e).__name__}
+        with tempfile.NamedTemporaryFile(suffix='.msg', delete=False) as tf:
+            tf.write(raw)
+            tmp = tf.name
+        try:
+            # describe_msg's keys are 'sentUtc' and 'subject'; it returns no sender, so
+            # that comes from extract_msg directly. Reading 'sent' here instead of
+            # 'sentUtc' silently blanked the date on every ingested blob and made every
+            # mixed group report DIFFER - a review tool that cries wolf is worse than none.
+            d = key_mod.describe_msg(tmp)
+            sender = ''
+            try:
+                import extract_msg
+                m = extract_msg.Message(tmp)
+                sender = m.sender or ''
+                m.close()
+            except Exception:                                     # noqa: BLE001
+                pass
+            return {'subject': decode_words(d.get('subject')), 'from': decode_words(sender),
+                    'sent': d.get('sentUtc') or '', 'size': total, 'error': None}
+        except Exception as e:                                    # noqa: BLE001
+            return {'error': type(e).__name__}
+        finally:
+            os.unlink(tmp)
+
+    try:
+        raw, _, total = storage.head_bytes_sized(blob_name, RETRY_BYTES)
+    except Exception as e:                                        # noqa: BLE001
+        return {'error': type(e).__name__}
+    msg = email.message_from_bytes(raw, policy=policy.default)
+    return {'subject': decode_words(str(msg.get('Subject') or '')),
+            'from': decode_words(str(msg.get('From') or '')),
+            'sent': key_mod.sent_utc(msg) or '', 'size': total, 'error': None}
+
+
+def cmd_review(args):
+    """Print a readable sample of planned groups, survivor beside the copies it replaces.
+
+    The sample is stratified rather than uniform, because the uniform case is the boring
+    one: mixed-scheme groups are where the keep-rule actually makes a choice, and the
+    largest groups are where a wrong choice costs most.
+    """
+    key_mod = load_ingest_key()
+    storage = Storage()
+
+    manifest = args.manifest or os.path.join(HERE, 'dedup-manifest.tsv')
+    if not os.path.exists(manifest):
+        sys.exit(f'no manifest at {manifest}. Run `plan` first.')
+
+    groups = {}
+    with open(manifest, encoding='utf-8') as fh:
+        fh.readline()
+        for line in fh:
+            p = line.rstrip('\n').split('\t')
+            if len(p) < 7:
+                continue
+            groups.setdefault(p[1], []).append(
+                {'action': p[0], 'matter': p[2], 'scheme': p[3], 'blob': p[5]})
+
+    if args.group:
+        chosen = [args.group] if args.group in groups else []
+        if not chosen:
+            sys.exit(f'token {args.group} is not in the manifest')
+    else:
+        import random
+        rnd = random.Random(args.seed)
+        mixed = [t for t, r in groups.items() if len({x['scheme'] for x in r}) > 1]
+        legacy_only = [t for t, r in groups.items() if all(x['scheme'] == 'legacy' for x in r)]
+        biggest = sorted(groups, key=lambda t: -len(groups[t]))[:200]
+        per = max(1, args.sample // 3)
+        chosen = []
+        for pool in (mixed, legacy_only, biggest):
+            rnd.shuffle(pool)
+            chosen += [t for t in pool if t not in chosen][:per]
+        chosen = chosen[:args.sample]
+
+    print(f'{len(groups):,} planned groups; showing {len(chosen)}'
+          f'{"" if args.group else " (mixed / legacy-only / largest)"}\n')
+
+    for token in chosen:
+        rows = sorted(groups[token], key=lambda r: r['action'] != 'KEEP')
+        print('=' * 100)
+        print(f'{token}   matter {rows[0]["matter"]}   {len(rows)} copies')
+        seen = set()
+        for r in rows:
+            d = describe_blob(storage, key_mod, r['blob'])   # fetched once, used twice below
+            mark = 'KEEP  ' if r['action'] == 'KEEP' else 'DELETE'
+            if d.get('error'):
+                print(f'  {mark} {r["scheme"]:<9} !! could not read: {d["error"]}')
+                continue
+            size = f'{d["size"]:,}' if d['size'] else '?'
+            print(f'  {mark} {r["scheme"]:<9} {d["sent"]:<21} {size:>10} bytes')
+            print(f'         from    {d["from"][:78]}')
+            print(f'         subject {d["subject"][:78]}')
+            # Collapse whitespace before comparing: a long .eml Subject arrives folded
+            # across lines while the .msg copy of the same subject does not, and an
+            # unnormalised compare would call that a difference.
+            subj_norm = ' '.join((d['subject'] or '').split()).lower()
+            seen.add((d['sent'], subj_norm))
+
+        # Report which field disagrees, because the two mean very different things. A
+        # differing sent date questions the grouping itself. A differing subject usually
+        # does not: the gateway prepends '[EXTERNAL] ' per recipient, so one delivered
+        # copy of a message carries it and another does not. Collapsing both into one
+        # DIFFER trains a reviewer to wave the flag through.
+        dates = {s for s, _ in seen}
+        subjects = {j for _, j in seen}
+        if len(dates) > 1:
+            print('  -> SENT DATES DIFFER - inspect before trusting this group')
+        elif len(subjects) > 1:
+            stripped = {re.sub(r'^\s*(\[external\]|\[suspicious\])\s*', '', j)
+                        for j in subjects}
+            print('  -> agree on sent date; subjects differ only by a gateway prefix'
+                  if len(stripped) == 1 else
+                  '  -> agree on sent date; SUBJECTS DIFFER - worth a look')
+        else:
+            print('  -> AGREE on sent date + subject')
+    print('\nNothing has been deleted.')
+    return 0
+
+
 def main():
+    # The Windows console is cp1252, and these subjects are not. A single emoji in one
+    # subject killed a review run at group 16 of 30 with UnicodeEncodeError - the same
+    # family of failure as the 87 spurious 404s from non-ASCII blob names and the
+    # Content-Disposition crashes, all in this one corpus. Replace what cannot be encoded
+    # rather than letting a character abort the pass.
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, OSError):
+        pass
+
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
 
@@ -396,7 +569,15 @@ def main():
     pl.add_argument('--parallel', type=int, default=24)
     pl.add_argument('--limit', type=int, help='stop after N candidate groups (for a trial run)')
 
+    rv = sub.add_parser('review', help='print a readable sample of planned groups')
+    rv.add_argument('--sample', type=int, default=12)
+    rv.add_argument('--manifest')
+    rv.add_argument('--group', help='inspect one token instead of a sample')
+    rv.add_argument('--seed', type=int, default=1, help='same seed gives the same sample')
+
     args = ap.parse_args()
+    if args.cmd == 'review':
+        return cmd_review(args)
     if not os.path.exists(args.index):
         sys.exit(f'no Message-ID index at {args.index}\n'
                  f'It is a gitignored build artefact - pass --index <path> to the copy you\n'
