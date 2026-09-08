@@ -25,6 +25,35 @@ function clampWidth(w: number, containerWidth: number): number {
   return Math.min(Math.max(w, LIST_WIDTH_MIN), max);
 }
 
+/** A rect's left edge and width — just enough of DOMRect to keep the pure functions
+ * below testable without a DOM. */
+export interface IPaneRect { left: number; width: number; }
+
+/**
+ * The list pane's target width for a pointer at `clientX`.
+ *
+ * `panesRect` is the .panes container's own rect; `listPaneLeft` is the list pane's
+ * *own* rendered left edge. Whatever the tree pane currently occupies — 280px when
+ * rendered, 0 when browseFuncUrl is empty and there is no tree at all, 0 again when
+ * the tree is configured but the 1100px breakpoint has hidden it — is already baked
+ * into listPaneLeft, because it was read off the live DOM rather than recomputed from
+ * treeWidth/browseFuncUrl state. That is what keeps this arithmetic from ever
+ * disagreeing with what the CSS actually rendered: a React-state-only check (e.g. "is
+ * browseFuncUrl set") cannot see the breakpoint hiding the tree, but the rendered rect
+ * always reflects it.
+ */
+export function listWidthForPointer(clientX: number, panesRect: IPaneRect, listPaneLeft: number): number {
+  const offset = listPaneLeft - panesRect.left;
+  return clampWidth(clientX - listPaneLeft, panesRect.width - offset);
+}
+
+/** The width available to [list pane + splitter + reading pane] — `panesRect.width`
+ * minus whatever the tree pane currently occupies (see listWidthForPointer). Used by
+ * the keyboard splitter handler, which has no pointer position to measure from. */
+export function listPaneAreaWidth(panesRect: IPaneRect, listPaneLeft: number): number {
+  return panesRect.width - (listPaneLeft - panesRect.left);
+}
+
 function loadListWidth(): number {
   const raw = window.localStorage.getItem(LIST_WIDTH_KEY);
   const n = raw ? parseInt(raw, 10) : NaN;
@@ -110,8 +139,14 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
 
   const onSplitterPointerMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
     if (!draggingRef.current || !panesRef.current) { return; }
-    const rect = panesRef.current.getBoundingClientRect();
-    setListWidth(clampWidth(e.clientX - rect.left, rect.width));
+    // Measured off the live DOM, not recomputed from treeWidth/browseFuncUrl — see
+    // listWidthForPointer's comment for why that is what keeps this correct when the
+    // tree pane is hidden by the 1100px breakpoint but browseFuncUrl is still set.
+    const listEl = panesRef.current.querySelector<HTMLElement>(`.${styles.listPane}`);
+    if (!listEl) { return; }
+    const panesRect = panesRef.current.getBoundingClientRect();
+    const listRect = listEl.getBoundingClientRect();
+    setListWidth(listWidthForPointer(e.clientX, panesRect, listRect.left));
   }, []);
 
   const onSplitterPointerUp = React.useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
@@ -125,7 +160,12 @@ const OutlookSearch: React.FC<IOutlookSearchProps> = (props) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
     e.preventDefault();
     const delta = e.key === 'ArrowLeft' ? -16 : 16;
-    const containerWidth = panesRef.current ? panesRef.current.getBoundingClientRect().width : 1200;
+    let containerWidth = 1200;
+    if (panesRef.current) {
+      const panesRect = panesRef.current.getBoundingClientRect();
+      const listEl = panesRef.current.querySelector<HTMLElement>(`.${styles.listPane}`);
+      containerWidth = listEl ? listPaneAreaWidth(panesRect, listEl.getBoundingClientRect().left) : panesRect.width;
+    }
     setListWidth((w) => {
       const next = clampWidth(w + delta, containerWidth);
       saveListWidth(next);
