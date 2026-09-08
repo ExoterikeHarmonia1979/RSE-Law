@@ -127,7 +127,17 @@ public class MattersBrowseFunc
 
     private async Task<IActionResult> ProbeAsync(BlobContainerClient container, string prefix)
     {
-        CapResult result = await MeasureAsync(container, prefix);
+        CapResult result;
+        try
+        {
+            result = await MeasureAsync(container, prefix);
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError(ex, "Probe failed for prefix {Prefix}", prefix);
+            return new ObjectResult(new { error = "Could not check that folder." }) { StatusCode = 502 };
+        }
+
         return new OkObjectResult(new
         {
             files = result.Files,
@@ -142,18 +152,35 @@ public class MattersBrowseFunc
 
     private async Task<IActionResult> ZipAsync(HttpRequest req, BlobContainerClient container, string prefix)
     {
-        CapResult cap = await MeasureAsync(container, prefix);
+        CapResult cap;
+        try
+        {
+            cap = await MeasureAsync(container, prefix);
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError(ex, "Measuring failed for prefix {Prefix} before zip", prefix);
+            return new ObjectResult(new { error = "Could not read that folder." }) { StatusCode = 502 };
+        }
+
         if (!cap.WithinLimit)
         {
             // Counts are lower bounds here - the walk stopped at the cap. The client
-            // renders "more than N", never these numbers as a total.
+            // renders "more than N", never these numbers as a total. countsAreLowerBounds
+            // and the qualified wording in `error` say so explicitly too, because this
+            // JSON body is also what a browser lands on directly if a folder crosses the
+            // cap between the probe and the navigation - there is no client formatting
+            // step in that path to add the caveat for it.
             return new ObjectResult(new
             {
-                error = "That folder is too large to download in one archive.",
+                error = $"That folder is too large to download in one archive: more than "
+                      + $"{DownloadCap.MaxFiles:N0} files or 2 GB. These are the counts at "
+                      + "the point the walk stopped, not a total.",
                 files = cap.Files,
                 bytes = cap.Bytes,
                 fileLimit = DownloadCap.MaxFiles,
-                byteLimit = DownloadCap.MaxBytes
+                byteLimit = DownloadCap.MaxBytes,
+                countsAreLowerBounds = true
             })
             { StatusCode = StatusCodes.Status413PayloadTooLarge };
         }
