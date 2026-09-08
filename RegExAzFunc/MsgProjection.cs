@@ -73,17 +73,22 @@ internal static class MsgProjection
     /// <summary>Guarded form of <see cref="Read"/>. A blob can pass <see cref="LooksLikeCompoundFile"/>
     /// on its first 8 bytes and still be truncated or corrupt beyond that header - MsgReader throws in
     /// that case. Mirrors the try/catch EmlPreviewFunc.LoadMessage already applies around
-    /// MimeMessage.Load, so a bad .msg degrades the same way a bad .eml does instead of a bare 500.</summary>
-    internal static bool TryRead(byte[] bytes, out IMsgMessage? message)
+    /// MimeMessage.Load, so a bad .msg degrades the same way a bad .eml does instead of a bare 500.
+    /// The exception comes back through <paramref name="error"/> - not just swallowed - so the caller
+    /// can log it the same way LoadMessage logs the .eml parse failure it mirrors; .msg is 52% of this
+    /// archive and, unlike the .eml path, has no field data yet.</summary>
+    internal static bool TryRead(byte[] bytes, out IMsgMessage? message, out Exception? error)
     {
         try
         {
             message = Read(bytes);
+            error = null;
             return true;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             message = null;
+            error = ex;
             return false;
         }
     }

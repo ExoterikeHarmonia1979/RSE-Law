@@ -111,9 +111,9 @@ public class EmlPreviewFunc
 
         if (MsgProjection.LooksLikeCompoundFile(docBytes!))
         {
-            if (!MsgProjection.TryRead(docBytes!, out IMsgMessage? msg))
+            if (!MsgProjection.TryRead(docBytes!, out IMsgMessage? msg, out Exception? msgError))
             {
-                return UnreadableMessage(docName);
+                return UnreadableMessage(docName, msgError);
             }
             return new OkObjectResult(MsgProjection.ToPreview(msg!, Sanitize));
         }
@@ -183,9 +183,9 @@ public class EmlPreviewFunc
 
         if (MsgProjection.LooksLikeCompoundFile(rawBytes!))
         {
-            if (!MsgProjection.TryRead(rawBytes!, out IMsgMessage? msg))
+            if (!MsgProjection.TryRead(rawBytes!, out IMsgMessage? msg, out Exception? msgError))
             {
-                return UnreadableMessage(rawName);
+                return UnreadableMessage(rawName, msgError);
             }
             foreach (MsgAttachment att in msg!.Attachments)
             {
@@ -270,10 +270,13 @@ public class EmlPreviewFunc
 
     /// <summary>Same 415 shape LoadMessage returns for an unparseable .eml, reused for a
     /// .msg that MsgProjection.TryRead could not parse (truncated or corrupt beyond the
-    /// OLE2 header LooksLikeCompoundFile checks).</summary>
-    private ObjectResult UnreadableMessage(string? blobName)
+    /// OLE2 header LooksLikeCompoundFile checks). Logs the exception itself, structured,
+    /// the same way LoadMessage logs the .eml parse failure it mirrors - .msg is 52% of
+    /// this archive and this path has no field data yet, so a swallowed exception here
+    /// would leave the first corrupt .msg in production undiagnosable.</summary>
+    private ObjectResult UnreadableMessage(string? blobName, Exception? ex = null)
     {
-        _logger.LogWarning("Blob {BlobName} is not parseable as a .msg message", blobName);
+        _logger.LogWarning(ex, "Blob {BlobName} is not parseable as a .msg message", blobName);
         return new ObjectResult(new
         {
             error = "This file is not a readable email message.",

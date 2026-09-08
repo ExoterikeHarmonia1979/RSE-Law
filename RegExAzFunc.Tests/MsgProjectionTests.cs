@@ -55,10 +55,29 @@ public class MsgProjectionTests
         Array.Copy(header, garbage, header.Length);
         for (int i = 8; i < garbage.Length; i++) { garbage[i] = 0x42; }
 
-        bool ok = MsgProjection.TryRead(garbage, out IMsgMessage? message);
+        bool ok = MsgProjection.TryRead(garbage, out IMsgMessage? message, out Exception? error);
 
         Assert.False(ok);
         Assert.Null(message);
+        Assert.NotNull(error);
+    }
+
+    // The first corrupt .msg in production would otherwise be undiagnosable: this path
+    // is brand new and .msg is 52% of the archive. TryRead must hand back the real
+    // exception, not just a bool, so the caller (EmlPreviewFunc.UnreadableMessage) can
+    // log it structured the way the mirrored .eml path already does.
+    [Fact]
+    public void TryRead_carries_the_real_exception_back_rather_than_discarding_it()
+    {
+        byte[] header = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        byte[] garbage = new byte[64];
+        Array.Copy(header, garbage, header.Length);
+        for (int i = 8; i < garbage.Length; i++) { garbage[i] = 0x42; }
+
+        MsgProjection.TryRead(garbage, out _, out Exception? error);
+
+        Exception thrown = Assert.ThrowsAny<Exception>(() => MsgProjection.Read(garbage));
+        Assert.Equal(thrown.GetType(), error!.GetType());
     }
 
     [Fact]
