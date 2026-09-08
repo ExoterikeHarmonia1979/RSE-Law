@@ -15,6 +15,12 @@
   "supportedHosts": ["SharePointWebPart", "TeamsPersonalApp", "TeamsTab", "SharePointFullPage"],
   "supportsThemeVariants": true,
 
+  // Lets the web part be placed in a page's full-width section, so three panes get the
+  // whole viewport rather than the ~1200px content column. Declaring this only makes the
+  // web part ELIGIBLE - the page author still has to add a full-width section and put it
+  // there. Full-width sections exist on Communication sites, not on Team sites.
+  "supportsFullBleed": true,
+
   "preconfiguredEntries": [{
     "groupId": "5c03119e-3074-46fd-976b-c60198311f70", // Advanced
     "group": { "default": "Advanced" },
