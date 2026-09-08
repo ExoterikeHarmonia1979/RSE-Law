@@ -102,15 +102,22 @@ The tokened form is keyed by the message's id tail, so deleting a message withou
 token folder orphans those blobs — and the search skillset indexes attachments as their
 own documents, so orphans would keep appearing in results.
 
-### Raise soft-delete retention before running
+### Raise soft-delete retention before running — DONE 2026-09-08
 
-The account has soft delete **enabled at 7 days**, with `allowPermanentDelete: false`.
-That is the entire safety net, and seven days is too short a window to notice a problem
-across 73,307 deletions. Raise it to at least 30 days before the run and leave it raised
-until the result has been reviewed.
+The account had soft delete enabled at **7 days**, which is too short a window to notice a
+problem across tens of thousands of deletions. Blob soft-delete retention is now **30
+days**, with `allowPermanentDelete: false` preserved:
+
+```
+blobSoftDelete : { enabled: true, days: 30, allowPermanentDelete: false }
+```
+
+Leave it at 30 until the result has been reviewed. Container soft delete is untouched at 7
+days, which is irrelevant here — this pass deletes blobs, never a container.
 
 Blob versioning and change feed are both **off**, so soft delete really is the only
-recovery path.
+recovery path. That is also why the retention window is the whole safety argument: past
+day 30 a wrong deletion is unrecoverable, so the review has to happen inside it.
 
 ## What the cleanup does
 
