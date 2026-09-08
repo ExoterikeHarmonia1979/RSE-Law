@@ -16,6 +16,13 @@ public class DedupTokenTests
         Assert.StartsWith("k", token);
         Assert.Equal(23, token!.Length);          // 'k' + 22 hex
         Assert.Matches("^k[0-9a-f]{22}$", token);
+
+        // The shape assertions above cannot catch a wrong delimiter, wrong case-folding,
+        // or a truncated-instead-of-hashed input that still happens to produce valid-looking
+        // hex - exactly the class of bug this test exists to catch. Pin the literal value
+        // ingest-key.py's dedup_key('abc@example.com', '2026-03-20T21:52:57Z') actually
+        // produces, so a drift in the algorithm itself fails loudly here.
+        Assert.Equal("k5e610767040b7fc3c8b636", token);
     }
 
     [Fact]
@@ -64,6 +71,23 @@ public class DedupTokenTests
     {
         Assert.Null(DedupToken.SentUtc(null));
         Assert.Null(DedupToken.SentUtc("not a date"));
+    }
+
+    [Fact]
+    public void SentUtc_accepts_graphs_iso8601_sentDateTime_as_well_as_rfc5322()
+    {
+        // Graph's sentDateTime (the ?from=fields sweep route) is ISO-8601, which
+        // DateUtils.TryParse (RFC 822/2822 only) does not accept. Without this fallback
+        // every item through that route keys to null and the endpoint is a permanent
+        // no-op - worse than the "affordably wrong" the design intended, because it
+        // re-queues the whole corpus forever instead of just being wrong sometimes.
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("2026-03-20T21:52:57Z"));
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("2026-03-20T21:52:57.0000000+00:00"));
+
+        // The RFC 5322 path this fallback sits behind must be unchanged: it is what the
+        // 401,170 existing tokens were computed from.
+        Assert.Equal("2026-05-04T17:33:58Z", DedupToken.SentUtc("Mon, 4 May 2026 10:33:58 -0700"));
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("Fri, 20 Mar 2026 21:52:57 +0000"));
     }
 
     [Fact]
