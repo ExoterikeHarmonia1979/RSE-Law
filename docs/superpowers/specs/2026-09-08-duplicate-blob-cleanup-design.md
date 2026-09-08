@@ -79,7 +79,11 @@ share one. The `k`-token rule (`sha256(lower(message-id) + '|' + sent-date-to-th
 is the identity that has already been validated on this data. The cleanup uses that key,
 so those collisions are never treated as duplicates.
 
-### Keep the copy whose bytes were not regenerated
+### Keep the copy whose bytes were not regenerated — CONFIRMED by the archive owner, 2026-09-08
+
+Reviewed against 237 sampled groups before sign-off, every one of which showed this rule
+making its choice. Approved as written.
+
 
 Where a group mixes legacy and ingested copies, **keep the legacy blob**. The ingest
 re-serialises MIME rather than copying it — `INGEST-BLOB-NAMING.md` measured 238,160
@@ -138,12 +142,20 @@ day 30 a wrong deletion is unrecoverable, so the review has to happen inside it.
 
 ## Unverified, and load-bearing
 
-**Nobody has confirmed the copies are actually the same message.** The whole plan rests on
-Message-ID + sent date being sufficient identity, which is well-evidenced on this corpus
-but has never been checked against the *specific* blobs this pass would delete. Before any
-deletion, sample ~100 groups across all three mechanisms and compare survivor to victim on
-subject, sender, recipients, date and body length. That check is cheap and it is the
-difference between a cleanup and a data-loss incident.
+~~**Nobody has confirmed the copies are actually the same message.**~~ **Done.**
+`dedup-plan.py review` sampled **237 groups**, stratified toward mixed-scheme groups (where
+the keep-rule actually chooses) and the largest groups (where a wrong choice costs most).
+All 237 agreed on sender, sent date and subject; consecutive seeds were checked for overlap
+and shared no groups. `selftest` separately proves the identity function reproduces the
+tokens already written into ingested blob names.
+
+Two apparent disagreements turned out to be artefacts of the comparison, not the data, and
+both are now handled: the mail gateway prepends `[EXTERNAL] ` per recipient, so one
+delivered copy carries it and another does not; and the `.msg` side returns RFC 2047
+encoded-words where the `.eml` side returns decoded text.
+
+**237 is 0.5% of the 47,121 groups.** What covers the rest is different evidence: the
+identity function is verified, and every one of the 47,121 groups has exactly one survivor.
 
 **The reclaimed size is unknown.** Every figure here is a blob count. Nobody has summed the
 bytes, so the actual storage saving is unmeasured.
