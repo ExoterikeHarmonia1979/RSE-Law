@@ -36,18 +36,23 @@ $graph  = (Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.co
 $gh  = @{ Authorization = "Bearer $graph" }
 $uid = (Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/users/$Mailbox`?`$select=id" -Headers $gh).id
 
+# No $orderby, so this takes Graph's default order, which is effectively most-recent-first.
+# That makes this a sample of recent traffic, not a cross-section of the archive's years of
+# mail and mail clients - recorded in the spec so the number isn't read as a corpus-wide
+# guarantee.
 $url = "https://graph.microsoft.com/v1.0/users/$uid/messages" +
        "?`$select=id,internetMessageId,sentDateTime&`$top=$([Math]::Min($Sample,999))"
 $page = Invoke-RestMethod -Headers $gh -Uri $url
 
-$agree = 0; $differ = 0; $noHeader = 0; $deltas = @()
+$agree = 0; $differ = 0; $noHeader = 0; $fetchFail = 0; $deltas = @()
 $n = 0
 $total0 = $page.value.Count
 Write-Host "fetched $total0 messages; comparing sentDateTime to Date: header..."
 
 function Show-Progress {
   if ($n % 20 -eq 0 -or $n -eq $total0) {
-    Write-Host ("progress: {0}/{1}  agree={2} differ={3} noHeader={4}" -f $n, $total0, $agree, $differ, $noHeader)
+    Write-Host ("progress: {0}/{1}  agree={2} differ={3} noHeader={4} fetchFail={5}" -f `
+      $n, $total0, $agree, $differ, $noHeader, $fetchFail)
   }
 }
 
@@ -56,12 +61,26 @@ foreach ($m in $page.value) {
   # Never let any exception's .Message reach output: .NET format/parse exceptions embed the
   # offending value, and that value can be message content. Only exception *type names* are
   # logged, and only counts are ever reported.
+
+  # Bucket 1: fetching $value failed - network error, throttling, a 5xx. This says nothing
+  # about whether the message has a usable Date: header, so it must not be counted as one.
   try {
     # $value is the raw MIME. Only the header block is needed, so ask for the first 64 KB.
     $mime = Invoke-WebRequest -Headers ($gh + @{ Range = 'bytes=0-65535' }) `
               -Uri "https://graph.microsoft.com/v1.0/users/$uid/messages/$($m.id)/`$value" `
               -UseBasicParsing
+  } catch {
+    $fetchFail++
+    Write-Host ("  (fetch failed: {0})" -f $_.Exception.GetType().Name)
+    Show-Progress
+    continue
+  }
 
+  # Bucket 2: the fetch succeeded but no usable Date: header could be derived from it - no
+  # Date: line in the fetched bytes, or one present but not parseable (an obsolete zone
+  # letter like EST, for example). Both mean the same thing for this measurement: this
+  # message can't supply a header-derived date to compare against sentDateTime.
+  try {
     # Invoke-WebRequest -UseBasicParsing does not reliably hand back .Content as byte[] -
     # depending on the response Content-Type it can already be a decoded [string]. Handle
     # both, and cap at 64 KB regardless of what the server actually honored on Range, so a
@@ -78,23 +97,27 @@ foreach ($m in $page.value) {
     if (-not $hdr.Success) { $noHeader++; Show-Progress; continue }
 
     $fromHeader = ([datetimeoffset]::Parse($hdr.Groups[1].Value)).ToUniversalTime()
-    $fromGraph = ([datetimeoffset]$m.sentDateTime).ToUniversalTime()
-
-    # To the second, which is the precision the token uses.
-    $d = [Math]::Abs(($fromHeader - $fromGraph).TotalSeconds)
-    if ($d -lt 1) { $agree++ } else { $differ++; $deltas += [int]$d }
   } catch {
     $noHeader++
-    Write-Host ("  (skipped one: {0})" -f $_.Exception.GetType().Name)
+    Write-Host ("  (header unusable: {0})" -f $_.Exception.GetType().Name)
+    Show-Progress
+    continue
   }
+
+  $fromGraph = ([datetimeoffset]$m.sentDateTime).ToUniversalTime()
+
+  # To the second, which is the precision the token uses.
+  $d = [Math]::Abs(($fromHeader - $fromGraph).TotalSeconds)
+  if ($d -lt 1) { $agree++ } else { $differ++; $deltas += [int]$d }
   Show-Progress
 }
 
 $total = $agree + $differ
 Write-Host ""
 Write-Host "sampled            : $($page.value.Count)"
-Write-Host "comparable         : $total"
+Write-Host "fetch failed       : $fetchFail"
 Write-Host "no usable header   : $noHeader"
+Write-Host "comparable         : $total"
 if ($total -gt 0) {
   Write-Host ("agree to the second: {0} ({1:N1}%)" -f $agree, (100*$agree/$total))
   Write-Host ("differ             : {0}" -f $differ)

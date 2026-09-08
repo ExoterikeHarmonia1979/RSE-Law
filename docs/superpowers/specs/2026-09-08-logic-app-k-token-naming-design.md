@@ -226,14 +226,24 @@ measurement of this pipeline's traffic. Actual cost may differ.
 
 **Measured 2026-09-08**, sample of 200 messages from `matters@rse-law.com` (via
 `tools/check-sentdate-agreement.ps1`): Graph's `sentDateTime` agreed with the `Date:`
-header to the second in all 192 comparable messages — **192/192, 100.0%, zero
-disagreements**. 8 of the 200 sampled (4.0%) had no parseable `Date:` header in the first
-64 KB fetched and were excluded rather than counted as disagreement, consistent with the
-archive-wide 0.052% no-header rate measured on ingested `.eml`/`.msg` blobs (those blobs
-already survived the pipeline; this sample is raw Graph traffic, so a somewhat higher rate
-here is expected). At this sample size the sweeps' cheap `$select` route is exact; the
-idempotency argument above remains the reason a future disagreement would still be safe,
-not the reason this one is.
+header to the second in all 196 comparable messages — **196/196, 100.0%, zero
+disagreements**. The script separates two failure modes that an earlier version of this
+measurement conflated: fetching `$value` can fail (network error, throttling, a 5xx), and
+a fetch that succeeds can still yield no usable header (no `Date:` line in the first 64 KB,
+or one present but unparseable — an obsolete zone letter like `EST`, for example). This run
+saw 0 fetch failures and 4 of 200 (2.0%) no-usable-header, so the header-derived rate isn't
+diluted by transient network noise. That 2.0% is higher than the archive-wide 0.052%
+no-usable-Message-ID rate measured on already-ingested `.eml`/`.msg` blobs, which is
+expected rather than a discrepancy: those blobs already survived the pipeline once, while
+this sample is unfiltered live Graph traffic. At this sample size the sweeps' cheap
+`$select` route is exact; the idempotency argument above remains the reason a future
+disagreement would still be safe, not the reason this one is.
+
+**This sample is the 200 most recent messages, not a cross-section.** The listing query
+carries no `$orderby` or randomisation, so it takes Graph's default (effectively
+most-recent-first) order. The archive spans years of mail from many clients, and recent
+traffic is plausibly more RFC-compliant than old traffic, so 100% agreement here should be
+read as "recent mail agrees," not as a corpus-wide guarantee.
 
 **The blast radius of a wrong token is larger than it looks.** A message named under a
 token that disagrees with the ingest's is not merely a duplicate — it is a duplicate whose
