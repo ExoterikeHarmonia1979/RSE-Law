@@ -42,7 +42,8 @@ param(
   [int]$BatchSize  = 50,
   [int]$Max        = 20000,
   [switch]$RefreshBlobs,
-  [switch]$Execute
+  [switch]$Execute,
+  [string]$TokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web
@@ -63,6 +64,41 @@ $uid = (Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/users/$Mailbox`
 function Get-IdTail([string]$id) {
   $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
   $t.Replace('/','_').Replace('+','-').Replace('=','')
+}
+
+<#
+The k-token for a batch of messages, from the Function that owns the rule.
+
+Deliberately not reimplemented here. The token exists in exactly one place - a PowerShell
+copy that drifted by one character would not throw, it would quietly stop recognising
+archived mail and re-upload it.
+
+sentDateTime is Graph's record rather than the Date: header every existing token came from.
+That substitution is safe HERE and nowhere else: a wrong token makes this script think a
+message is missing, it re-queues it, and the pipeline archives it under the authoritative
+token - the same name it already has - and overwrites. Wrong costs bandwidth, not a
+duplicate. See the spec's "The sweeps get the cheap route the pipeline cannot have".
+#>
+function Get-KTokens {
+  param([array]$Messages, [string]$FuncUrl)
+  if (-not $FuncUrl -or -not $Messages.Count) { return @{} }
+  $map = @{}
+  for ($i = 0; $i -lt $Messages.Count; $i += 500) {
+    $chunk = $Messages[$i..([Math]::Min($i + 499, $Messages.Count - 1))]
+    try {
+      $body = @($chunk | ForEach-Object {
+        @{ id = $_.id; messageId = $_.internetMessageId; sentDateTime = $_.sentDateTime }
+      }) | ConvertTo-Json -Depth 4 -AsArray
+      $res = Invoke-RestMethod -Method Post -Uri "$FuncUrl&from=fields" `
+               -ContentType 'application/json' -Body $body -TimeoutSec 120
+      foreach ($r in $res) { if ($r.token) { $map[$r.id] = $r.token } }
+    } catch {
+      # No token means this batch falls back to legacy-tail matching only, which is how
+      # the script behaved before. Never fatal.
+      Write-Warning "token service unavailable for a batch of $($chunk.Count): $($_.Exception.Message)"
+    }
+  }
+  return $map
 }
 
 # Same rule as sweep-inbox.ps1: a folder leaf that is a well-formed RSE file number is a
@@ -120,7 +156,7 @@ $batch = @(); $report = @(); $byMatter = @{}
 $filter = "receivedDateTime lt ${Before}T00:00:00Z"
 if ($After) { $filter = "receivedDateTime ge ${After}T00:00:00Z and $filter" }
 $u = "https://graph.microsoft.com/v1.0/users/$uid/messages?`$filter=$([uri]::EscapeDataString($filter))" +
-     "&`$select=id,subject,receivedDateTime,parentFolderId&`$top=200"
+     "&`$select=id,subject,receivedDateTime,parentFolderId,internetMessageId,sentDateTime&`$top=200"
 while ($u -and $queued -lt $Max) {
   $page = $null
   for ($try = 1; $try -le 5; $try++) {
@@ -136,10 +172,14 @@ while ($u -and $queued -lt $Max) {
   }
   if (-not $page) { Write-Warning "giving up on a page after retries"; $errors++; break }
 
+  $kTokens = Get-KTokens -Messages $page.value -FuncUrl $TokenFuncUrl
+
   foreach ($m in $page.value) {
     $seen++
+    # Either scheme counts as archived - see the note on Get-KTokens.
     $tail = Get-IdTail $m.id
-    if ($tails.Contains($tail)) { $already++; continue }
+    $ktok = $kTokens[$m.id]
+    if ($tails.Contains($tail) -or ($ktok -and $tails.Contains($ktok))) { $already++; continue }
 
     if (-not $folderCache.ContainsKey($m.parentFolderId)) {
       try {

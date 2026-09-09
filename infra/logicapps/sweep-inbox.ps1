@@ -38,6 +38,7 @@ param(
   [string]$OnlyPath,                # -AllFolders: restrict to folder paths containing this
   [string]$RestrictToTails,         # file of blob id-suffixes; enqueue only those messages
   [string]$StateFile,               # -AllFolders: record finished folders so a re-run resumes
+  [string]$TokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL,
   [switch]$Execute                  # dry run unless set
 )
 $ErrorActionPreference = 'Stop'
@@ -138,12 +139,51 @@ message id. Reproducing that transform here lets a blob be mapped back to the me
 produced it, so a targeted re-run can cover exactly the mail a bug mis-filed instead of
 re-processing the whole File Cabinet - roughly a tenth of the work.
 
-This MUST match transform.ps1's $idTail exactly. If that changes, change this:
+The pipeline now names blobs by the k-token (sha256 of Message-ID + sent date) and falls
+back to this tail only when the token service is unavailable, so a blob name may carry
+either. This transform still has to match transform.ps1's fallback exactly:
     last 24 chars, then '/'->'_', '+'->'-', '=' dropped
+The token half is not reimplemented here - DedupTokenFunc owns it. See
+docs/superpowers/specs/2026-09-08-logic-app-k-token-naming-design.md.
 #>
 function Get-IdTail([string]$id) {
   $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
   $t.Replace('/','_').Replace('+','-').Replace('=','')
+}
+
+<#
+The k-token for a batch of messages, from the Function that owns the rule.
+
+Deliberately not reimplemented here. The token exists in exactly one place - a PowerShell
+copy that drifted by one character would not throw, it would quietly stop recognising
+archived mail and re-upload it.
+
+sentDateTime is Graph's record rather than the Date: header every existing token came from.
+That substitution is safe HERE and nowhere else: a wrong token makes this script think a
+message is missing, it re-queues it, and the pipeline archives it under the authoritative
+token - the same name it already has - and overwrites. Wrong costs bandwidth, not a
+duplicate. See the spec's "The sweeps get the cheap route the pipeline cannot have".
+#>
+function Get-KTokens {
+  param([array]$Messages, [string]$FuncUrl)
+  if (-not $FuncUrl -or -not $Messages.Count) { return @{} }
+  $map = @{}
+  for ($i = 0; $i -lt $Messages.Count; $i += 500) {
+    $chunk = $Messages[$i..([Math]::Min($i + 499, $Messages.Count - 1))]
+    try {
+      $body = @($chunk | ForEach-Object {
+        @{ id = $_.id; messageId = $_.internetMessageId; sentDateTime = $_.sentDateTime }
+      }) | ConvertTo-Json -Depth 4 -AsArray
+      $res = Invoke-RestMethod -Method Post -Uri "$FuncUrl&from=fields" `
+               -ContentType 'application/json' -Body $body -TimeoutSec 120
+      foreach ($r in $res) { if ($r.token) { $map[$r.id] = $r.token } }
+    } catch {
+      # No token means this batch falls back to legacy-tail matching only, which is how
+      # the script behaved before. Never fatal.
+      Write-Warning "token service unavailable for a batch of $($chunk.Count): $($_.Exception.Message)"
+    }
+  }
+  return $map
 }
 $tailSet = $null
 if ($RestrictToTails) {
@@ -173,10 +213,11 @@ foreach ($t in $script:targets) {
   if ($done.ContainsKey($t.Id)) { continue }
 
   $url = "https://graph.microsoft.com/v1.0/users/$uid/mailFolders/$($t.Id)/messages" +
-         "?`$select=id&`$top=999&`$orderby=receivedDateTime asc"
+         "?`$select=id,internetMessageId,sentDateTime&`$top=999&`$orderby=receivedDateTime asc"
   $fQueued = 0
   while ($url) {
     $page = Invoke-RestMethod -Uri $url -Headers $gh
+    $kTokens = Get-KTokens -Messages $page.value -FuncUrl $TokenFuncUrl
     foreach ($m in $page.value) {
       $seen++
       if (-not $AllFolders -and $seen -le $Skip) { continue }
@@ -185,14 +226,23 @@ foreach ($t in $script:targets) {
       # once - no stable sort, live folder - and counting those as collisions reported 3,327
       # of them where a dedup'd re-measure found exactly zero. A false alarm here would send
       # someone rewriting a naming scheme that is fine.
-      $mTail = Get-IdTail $m.id
+      # Count collisions on whatever the blob name will actually carry. Counting the Graph
+      # tail after the pipeline switched would measure an identifier no new name uses, and
+      # report a clean result while real collisions went unseen.
+      $legacyTail = Get-IdTail $m.id
+      $kToken     = $kTokens[$m.id]
+      $mTail      = if ($kToken) { $kToken } else { $legacyTail }
       if ($idsSeen.ContainsKey($m.id)) { $pagingDupes++ }
       else {
         $idsSeen[$m.id] = $true
         $tKey = "$($t.Hint)|$mTail"
         if ($tailsSeen.ContainsKey($tKey)) { $tailCollisions++ } else { $tailsSeen[$tKey] = $true }
       }
-      if ($tailSet -and -not $tailSet.ContainsKey($mTail)) { continue }
+      # A tails file may hold either scheme: legacy tails from before the pipeline switched,
+      # k-tokens after. Matching only $mTail would make a legacy file silently match nothing
+      # whenever -TokenFuncUrl is also set, and a targeted re-run would quietly do nothing.
+      if ($tailSet -and -not ($tailSet.ContainsKey($legacyTail) -or
+                              ($kToken -and $tailSet.ContainsKey($kToken)))) { continue }
 
       $resource = "Users/$uid/Messages/$($m.id)"
       # Shaped to match a real Graph change notification; the workflow reads
