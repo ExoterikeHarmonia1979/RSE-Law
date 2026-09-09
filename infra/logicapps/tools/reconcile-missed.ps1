@@ -169,7 +169,10 @@ if ($boxes.Count -eq 0) { throw "no message subscriptions found - refusing to ru
 
 # --- 3. what is already archived? ---------------------------------------------------------
 $idx = Join-Path $sp 'archive-tails.txt'
-$stale = $RefreshIndex -or -not (Test-Path $idx) -or
+# Read first: an index built under a different extraction rule is stale however new it is,
+# and Read-ArchiveIndex is the only thing that can tell.
+$archived = Read-ArchiveIndex $idx
+$stale = $RefreshIndex -or -not $archived -or
          ((Get-Date) - (Get-Item $idx).LastWriteTime).TotalHours -gt $IndexMaxAgeHours
 if ($stale) {
   Write-Host "building the archive index (paged REST listing, ~100k blobs/min) ..."
@@ -180,13 +183,11 @@ if ($stale) {
   if ($names.Count -lt 1000) { throw "container listing returned only $($names.Count) blobs - refusing to treat that as the archive" }
   $dump = Join-Path $sp 'archive-blobs.txt'
   Set-Content -Path $dump -Value $names
-  $tails = Get-ArchivedIdentities $names
-  $tails | Set-Content $idx
-  Write-Host ("  {0:n0} blobs -> {1:n0} distinct messages in {2:n0}s" -f $names.Count, $tails.Count, $sw.Elapsed.TotalSeconds)
+  $archived = Get-ArchivedIdentities $names
+  Write-ArchiveIndex -Path $idx -Identities $archived
+  Write-Host ("  {0:n0} blobs -> {1:n0} distinct messages in {2:n0}s" -f $names.Count, $archived.Count, $sw.Elapsed.TotalSeconds)
 }
-$archived = New-Object System.Collections.Generic.HashSet[string]
-foreach ($t in (Get-Content $idx)) { if ($t) { [void]$archived.Add($t) } }
-Write-Host "archive index: $($archived.Count) message tails (built $((Get-Item $idx).LastWriteTime))"
+Write-Host "archive index: $($archived.Count) distinct messages (built $((Get-Item $idx).LastWriteTime))"
 
 # --- 4. Service Bus sender (identical shape to sweep-inbox.ps1) ---------------------------
 $ns  = 'sharepointexchangeeventgrid.servicebus.windows.net'

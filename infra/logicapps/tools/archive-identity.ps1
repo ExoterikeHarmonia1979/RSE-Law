@@ -173,3 +173,38 @@ function Get-ArchivedIdentities([string[]]$BlobNames) {
   foreach ($n in $BlobNames) { if ($n -match '\[([^\]]+)\]\.(eml|msg)$') { [void]$set.Add($Matches[1]) } }
   $set
 }
+
+<#
+The rule this index was built under, written into the index itself.
+
+Age is not the only way a cached index goes wrong. When the extraction rule changes, an index
+built under the old rule is still FRESH and still WRONG, and nothing about it looks wrong -
+it is a plausible list of plausible identities, just missing a scheme.
+
+That is not hypothetical. The first scheduled run after this rule widened to (eml|msg) reused
+a 3-hour-old index built by the previous code: 332,896 identities where the same container
+yields 750,021. It judged 30 already-archived messages missing and re-enqueued them, reported
+success, and would have done it again every 2 hours until the index aged out.
+
+Bump this string whenever Get-ArchivedIdentities changes what it matches. An index whose
+first line does not match is rebuilt regardless of age.
+#>
+$script:ArchiveIndexRule = '#rule=2 [id].(eml|msg) legacy+ktoken'
+
+function Write-ArchiveIndex([string]$Path, $Identities) {
+  @($script:ArchiveIndexRule) + @($Identities) | Set-Content -Path $Path
+}
+
+# Returns the identities, or $null when the file is absent or was built under another rule.
+function Read-ArchiveIndex([string]$Path) {
+  if (-not (Test-Path $Path)) { return $null }
+  $lines = @(Get-Content $Path)
+  if (-not $lines.Count -or $lines[0] -ne $script:ArchiveIndexRule) {
+    Write-Warning ("archive index at {0} was built under a different rule ({1}) - rebuilding" -f
+                   $Path, $(if ($lines.Count -and $lines[0].StartsWith('#rule=')) { $lines[0] } else { 'unversioned, pre-k-token' }))
+    return $null
+  }
+  $set = New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach ($t in $lines[1..($lines.Count - 1)]) { if ($t) { [void]$set.Add($t) } }
+  $set
+}
