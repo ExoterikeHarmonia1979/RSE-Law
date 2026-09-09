@@ -373,7 +373,23 @@ $found.actions = @{
       # story: naming is best-effort, and a message must not wait on a sick token service.
       # 30s is generous against a call measured in hundreds of milliseconds, and a timeout
       # lands in TimedOut, which Message_Identifier already treats as "use the legacy tail".
-      retryPolicy = @{ type = 'none' }
+      #
+      # One retry, not none. Falling back is SAFE but not FREE: a message named by the legacy
+      # tail is a message the k-token cannot collapse, so every transient blip permanently
+      # mints a copy that the next arrival of the same mail will not overwrite. That is the
+      # duplication this whole change exists to stop, re-entering through the back door.
+      #
+      # A retry only helps a TRANSIENT failure, and Logic Apps retries exactly those: 408,
+      # 429 and 5xx. A 422 is a 4xx, so "this message has no derivable identity" is not
+      # retried - it is deterministic, and retrying it would just cost 5 seconds to reach the
+      # same fallback. Cold starts and throttling on Flex Consumption are the cases that pay,
+      # and they are the same 429/503 responses that produce the text/html body proven today
+      # to fail Message_Identifier outright.
+      #
+      # Budget: limit.timeout is per attempt, so the worst case is 30s + 5s + 30s = 65s. The
+      # Service Bus lock is PT5M and this runs inside it, so there is roughly 4 minutes of
+      # headroom before the lock-lost failure mode this queue is known for.
+      retryPolicy = @{ type = 'fixed'; count = 1; interval = 'PT5S' }
     }
     limit = @{ timeout = 'PT30S' }
     # NO contentTransfer/Chunked here, deliberately. Chunked is right on the GET that pulls

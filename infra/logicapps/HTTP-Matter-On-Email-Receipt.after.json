@@ -600,7 +600,9 @@
                             },
                             "method": "POST",
                             "retryPolicy": {
-                              "type": "none"
+                              "count": 1,
+                              "interval": "PT5S",
+                              "type": "fixed"
                             },
                             "uri": "@parameters('dedupTokenFuncUrl')"
                           },
