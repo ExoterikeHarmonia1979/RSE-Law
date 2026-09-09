@@ -90,8 +90,8 @@ class Storage:
         self._token = None
         self._expires = 0
 
-    def token(self):
-        if self._token and time.time() < self._expires - 300:
+    def token(self, force=False):
+        if self._token and not force and time.time() < self._expires - 300:
             return self._token
         out = subprocess.run(
             [AZ, 'account', 'get-access-token', '--resource', 'https://storage.azure.com/',
@@ -101,8 +101,28 @@ class Storage:
             sys.exit(f'could not get a storage token from az:\n{out.stderr.strip()}')
         data = json.loads(out.stdout)
         self._token = data['accessToken']
-        # expiresOn is local time without a zone; lean on expires_in when present.
-        self._expires = time.time() + int(data.get('expires_in', 3000))
+        # Use the token's REAL expiry, never a guessed lifetime.
+        #
+        # az returns expiresOn (local time, no zone) and expires_on (epoch seconds). It does
+        # NOT return expires_in, so `data.get('expires_in', 3000)` silently took the default
+        # every single time and claimed 50 minutes from acquisition regardless of the truth.
+        # az also caches tokens: ask for one and you may get an existing token with minutes
+        # left, while this code believes it has 50.
+        #
+        # That is not theoretical. A probe run read 17,437 survivors cleanly, then failed on
+        # every one of the next 3,000 - a hard cutover, not the ragged pattern throttling
+        # makes. The token had died around ten minutes in; token() kept handing back the dead
+        # one because its fictional expiry was still in the future, and the caller's retry
+        # slept two seconds and reused it. It would have reported thousands of readable blobs
+        # as unreadable, and that verdict feeds a deletion decision.
+        if data.get('expires_on'):
+            self._expires = int(data['expires_on'])
+        elif data.get('expires_in'):
+            self._expires = time.time() + int(data['expires_in'])
+        else:
+            # Last resort. Deliberately short: a needless refresh costs one subprocess call,
+            # an over-long guess costs a run that fails while insisting it is fine.
+            self._expires = time.time() + 600
         return self._token
 
     def url(self, blob_name):

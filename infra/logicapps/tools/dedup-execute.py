@@ -603,6 +603,15 @@ def cmd_probe(args):
                 break
             except urllib.error.HTTPError as e:
                 if e.code in RETRYABLE and attempt < ATTEMPTS - 1:
+                    # An expired token is the failure this loop most needs to survive, and
+                    # sleeping does not fix one - the next attempt must ask for a NEW token.
+                    # Without this, a token that dies mid-run makes every remaining blob look
+                    # unreadable while the retry politely re-presents the same dead
+                    # credential. Storage.token(force=True) re-mints; it is cheap because the
+                    # refreshed token is then shared by every thread.
+                    if e.code in (401, 403):
+                        try: storage.token(force=True)
+                        except Exception: pass                     # noqa: BLE001
                     # Back off rather than hammering: 1, 2, 4, 8s. A fixed 2s sleep across 24
                     # threads reconverges on the same instant and re-triggers the throttle.
                     time.sleep(2 ** attempt)
