@@ -38,11 +38,17 @@ param(
   [string]$OnlyPath,                # -AllFolders: restrict to folder paths containing this
   [string]$RestrictToTails,         # file of blob id-suffixes; enqueue only those messages
   [string]$StateFile,               # -AllFolders: record finished folders so a re-run resumes
-  [string]$TokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL,
+  # Empty by default; Resolve-TokenFuncUrl also tries the environment and Key Vault.
+  [string]$TokenFuncUrl,
   [switch]$Execute                  # dry run unless set
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web
+
+. "$PSScriptRoot\tools\archive-identity.ps1"
+
+$TokenFuncUrl = Resolve-TokenFuncUrl -Explicit $TokenFuncUrl
+Write-Host ("k-token lookup: {0}" -f $(if ($TokenFuncUrl) { 'enabled' } else { 'DISABLED - legacy tails only' }))
 
 $az     = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $tenant = '29b31beb-399c-4432-aa07-9258f6e46620'
@@ -134,57 +140,11 @@ if ($AllFolders) {
 <#
 Re-send only specific messages, identified by the suffix in their blob name.
 
-Blob names end in " [<tail>].eml" where <tail> is what Email_Blob_Name builds from the Graph
-message id. Reproducing that transform here lets a blob be mapped back to the message that
-produced it, so a targeted re-run can cover exactly the mail a bug mis-filed instead of
-re-processing the whole File Cabinet - roughly a tenth of the work.
-
-The pipeline now names blobs by the k-token (sha256 of Message-ID + sent date) and falls
-back to this tail only when the token service is unavailable, so a blob name may carry
-either. This transform still has to match transform.ps1's fallback exactly:
-    last 24 chars, then '/'->'_', '+'->'-', '=' dropped
-The token half is not reimplemented here - DedupTokenFunc owns it. See
-docs/superpowers/specs/2026-09-08-logic-app-k-token-naming-design.md.
+Blob names end in " [<id>].eml", where <id> is either a k-token or the legacy Graph-id tail.
+Mapping a blob back to the message that produced it lets a targeted re-run cover exactly the
+mail a bug mis-filed instead of re-processing the whole File Cabinet - roughly a tenth of the
+work. Both transforms live in tools/archive-identity.ps1, dot-sourced above.
 #>
-function Get-IdTail([string]$id) {
-  $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
-  $t.Replace('/','_').Replace('+','-').Replace('=','')
-}
-
-<#
-The k-token for a batch of messages, from the Function that owns the rule.
-
-Deliberately not reimplemented here. The token exists in exactly one place - a PowerShell
-copy that drifted by one character would not throw, it would quietly stop recognising
-archived mail and re-upload it.
-
-sentDateTime is Graph's record rather than the Date: header every existing token came from.
-That substitution is safe HERE and nowhere else: a wrong token makes this script think a
-message is missing, it re-queues it, and the pipeline archives it under the authoritative
-token - the same name it already has - and overwrites. Wrong costs bandwidth, not a
-duplicate. See the spec's "The sweeps get the cheap route the pipeline cannot have".
-#>
-function Get-KTokens {
-  param([array]$Messages, [string]$FuncUrl)
-  if (-not $FuncUrl -or -not $Messages.Count) { return @{} }
-  $map = @{}
-  for ($i = 0; $i -lt $Messages.Count; $i += 500) {
-    $chunk = $Messages[$i..([Math]::Min($i + 499, $Messages.Count - 1))]
-    try {
-      $body = @($chunk | ForEach-Object {
-        @{ id = $_.id; messageId = $_.internetMessageId; sentDateTime = $_.sentDateTime }
-      }) | ConvertTo-Json -Depth 4 -AsArray
-      $res = Invoke-RestMethod -Method Post -Uri "$FuncUrl&from=fields" `
-               -ContentType 'application/json' -Body $body -TimeoutSec 120
-      foreach ($r in $res) { if ($r.token) { $map[$r.id] = $r.token } }
-    } catch {
-      # No token means this batch falls back to legacy-tail matching only, which is how
-      # the script behaved before. Never fatal.
-      Write-Warning "token service unavailable for a batch of $($chunk.Count): $($_.Exception.Message)"
-    }
-  }
-  return $map
-}
 $tailSet = $null
 if ($RestrictToTails) {
   if (-not (Test-Path $RestrictToTails)) { throw "no tails file at $RestrictToTails" }

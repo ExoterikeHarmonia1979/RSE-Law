@@ -32,13 +32,24 @@ failures or an expired subscription just as well, none of which announce themsel
 
 HOW ABSENCE IS DETERMINED
 -------------------------
-Not by subject, date or sender - by the message-id tail that the workflow puts in every
-blob name. The same transform as transform.ps1 and sweep-inbox.ps1:
+Not by subject, date or sender - by the identifier the workflow puts in every blob name.
+There are two, because the naming scheme changed, and a message is missing only when
+NEITHER is present:
 
-    last 24 chars of the Graph message id, then '/'->'_', '+'->'-', '=' dropped
+    legacy   last 24 chars of the Graph message id, '/'->'_', '+'->'-', '=' dropped
+    k-token  k + 22 hex of sha256(message-id + '|' + sent-utc), from DedupTokenFunc
 
-A message is missing exactly when no blob in the container carries its tail. Listing the
-container takes several minutes, so the tail index is cached and reused; -RefreshIndex or
+Everything archived before the switch carries a legacy tail; everything since carries a
+k-token, as does the mailbox export - and the export's blobs are .msg, not .eml. Measured
+over the whole container on 2026-09-09 (1,045,597 blobs): matching '[...].eml' alone finds
+332,530 distinct identities, matching '[...].(eml|msg)' finds 750,001. A .eml-only rule was
+blind to 417,471 archived messages - more than half the archive.
+
+Checking only one scheme reports live mail as missing and re-queues it on every run - see
+Resolve-TokenFuncUrl in archive-identity.ps1 for how the Function URL is found, and what
+happens when it cannot be.
+
+Listing the container takes minutes, so the index is cached and reused; -RefreshIndex or
 an index older than -IndexMaxAgeHours forces a rebuild.
 
 Re-enqueuing an already-archived message is harmless anyway - blob names are deterministic,
@@ -58,61 +69,29 @@ param(
   [int]$BatchSize            = 50,
   [int]$Max                  = 20000,
   [switch]$Execute,
-  [string]$TokenFuncUrl      = $env:DEDUP_TOKEN_FUNC_URL
+  # Left empty deliberately: Resolve-TokenFuncUrl below also tries the environment and Key
+  # Vault. Defaulting it to $env: here would have hidden the Key Vault leg from the scheduled
+  # run, which is the environment that has no environment.
+  [string]$TokenFuncUrl
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web
+
+. "$PSScriptRoot\archive-identity.ps1"
 
 $sp     = $PSScriptRoot
 $az     = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $tenant = '29b31beb-399c-4432-aa07-9258f6e46620'
 $appId  = '43248a7a-1c76-40fd-91b6-57ec5f08639e'
 
+$TokenFuncUrl = Resolve-TokenFuncUrl -Explicit $TokenFuncUrl
+Write-Host ("k-token lookup: {0}" -f $(if ($TokenFuncUrl) { 'enabled' } else { 'DISABLED - legacy tails only' }))
+
 $secret = (& $az keyvault secret show --vault-name kv-rse-graphsubs --name GraphSubClientSecret --query value -o tsv)
 $graph  = (Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" -Body @{
              client_id = $appId; scope = 'https://graph.microsoft.com/.default'
              client_secret = $secret; grant_type = 'client_credentials' }).access_token
 $gh = @{ Authorization = "Bearer $graph" }
-
-function Get-IdTail([string]$id) {
-  $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
-  $t.Replace('/','_').Replace('+','-').Replace('=','')
-}
-
-<#
-The k-token for a batch of messages, from the Function that owns the rule.
-
-Deliberately not reimplemented here. The token exists in exactly one place - a PowerShell
-copy that drifted by one character would not throw, it would quietly stop recognising
-archived mail and re-upload it.
-
-sentDateTime is Graph's record rather than the Date: header every existing token came from.
-That substitution is safe HERE and nowhere else: a wrong token makes this script think a
-message is missing, it re-queues it, and the pipeline archives it under the authoritative
-token - the same name it already has - and overwrites. Wrong costs bandwidth, not a
-duplicate. See the spec's "The sweeps get the cheap route the pipeline cannot have".
-#>
-function Get-KTokens {
-  param([array]$Messages, [string]$FuncUrl)
-  if (-not $FuncUrl -or -not $Messages.Count) { return @{} }
-  $map = @{}
-  for ($i = 0; $i -lt $Messages.Count; $i += 500) {
-    $chunk = $Messages[$i..([Math]::Min($i + 499, $Messages.Count - 1))]
-    try {
-      $body = @($chunk | ForEach-Object {
-        @{ id = $_.id; messageId = $_.internetMessageId; sentDateTime = $_.sentDateTime }
-      }) | ConvertTo-Json -Depth 4 -AsArray
-      $res = Invoke-RestMethod -Method Post -Uri "$FuncUrl&from=fields" `
-               -ContentType 'application/json' -Body $body -TimeoutSec 120
-      foreach ($r in $res) { if ($r.token) { $map[$r.id] = $r.token } }
-    } catch {
-      # No token means this batch falls back to legacy-tail matching only, which is how
-      # the script behaved before. Never fatal.
-      Write-Warning "token service unavailable for a batch of $($chunk.Count): $($_.Exception.Message)"
-    }
-  }
-  return $map
-}
 
 # --- 1. when did we miss something? -------------------------------------------------------
 # ARM is called directly: az.cmd is a batch file and eats the '&' between query parameters,
@@ -193,16 +172,17 @@ $idx = Join-Path $sp 'archive-tails.txt'
 $stale = $RefreshIndex -or -not (Test-Path $idx) -or
          ((Get-Date) - (Get-Item $idx).LastWriteTime).TotalHours -gt $IndexMaxAgeHours
 if ($stale) {
-  Write-Host "building the archive tail index (listing the container, takes a few minutes) ..."
-  $dump = Join-Path $sp 'archive-blobs.txt'
-  & $az storage blob list --account-name samatters --container-name matters `
-      --num-results "*" --auth-mode login --query "[].name" -o tsv 2>$null | Set-Content $dump
-  $names = @(Get-Content $dump)
+  Write-Host "building the archive index (paged REST listing, ~100k blobs/min) ..."
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $names = @(Get-AllBlobNames -Account samatters -Container matters -Progress {
+    param($n) Write-Host ("  {0:n0} blobs, {1:n0}s ..." -f $n, $sw.Elapsed.TotalSeconds)
+  })
   if ($names.Count -lt 1000) { throw "container listing returned only $($names.Count) blobs - refusing to treat that as the archive" }
-  $tails = New-Object System.Collections.Generic.HashSet[string]
-  foreach ($n in $names) { if ($n -match '\[([^\]]+)\]\.eml$') { [void]$tails.Add($Matches[1]) } }
+  $dump = Join-Path $sp 'archive-blobs.txt'
+  Set-Content -Path $dump -Value $names
+  $tails = Get-ArchivedIdentities $names
   $tails | Set-Content $idx
-  Write-Host "  $($names.Count) blobs -> $($tails.Count) distinct message tails"
+  Write-Host ("  {0:n0} blobs -> {1:n0} distinct messages in {2:n0}s" -f $names.Count, $tails.Count, $sw.Elapsed.TotalSeconds)
 }
 $archived = New-Object System.Collections.Generic.HashSet[string]
 foreach ($t in (Get-Content $idx)) { if ($t) { [void]$archived.Add($t) } }

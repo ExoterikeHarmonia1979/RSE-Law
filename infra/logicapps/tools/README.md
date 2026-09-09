@@ -92,8 +92,9 @@ Graph failures and expired subscriptions, none of which announce themselves eith
 
 | | |
 |---|---|
-| `reconcile-missed.ps1` | Compares every subscribed mailbox against the archive over a trailing window and enqueues what is absent. Absence is by **message-id tail**, the same identity the blob names carry - never by subject or date. Dry run unless `-Execute`. |
+| `reconcile-missed.ps1` | Compares every subscribed mailbox against the archive over a trailing window and enqueues what is absent. Absence is by the identity in the blob name - never by subject or date - and checks **both** schemes: the legacy message-id tail and the k-token. Dry run unless `-Execute`. |
 | `run-reconcile-scheduled.ps1` | Scheduled-task wrapper. Runs a 3-hour window every 2 hours so consecutive runs overlap, logs each run, prunes logs after 30 days. |
+| `archive-identity.ps1` | Dot-sourced by the three predictors above and by `../sweep-inbox.ps1`. Owns the two naming schemes, the k-token Function lookup, and the paged container listing. Not a standalone script. |
 
 Installed as scheduled task **`RSE-Archive-Reconcile`**, every 2 hours.
 

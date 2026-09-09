@@ -9,12 +9,7 @@ param(
   [switch]$AcceptDrift,
   # Skip the drift check entirely - for working with no Azure access.
   [switch]$NoDriftCheck,
-  [string]$BaselinePath = "$PSScriptRoot\deployed.json",
-  # DedupTokenFunc's URL, key included (?code=...) - same env var the sweep scripts
-  # already read (sweep-inbox.ps1, tools/sweep-older-mail.ps1, tools/reconcile-missed.ps1).
-  # Wired into the workflow as a parameter (Section 8 below), never inlined into the
-  # definition, so the key does not end up hardcoded in after.json/deployed.json.
-  [string]$DedupTokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL
+  [string]$BaselinePath = "$PSScriptRoot\deployed.json"
 )
 $ErrorActionPreference = 'Stop'
 

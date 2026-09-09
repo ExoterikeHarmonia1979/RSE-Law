@@ -43,10 +43,13 @@ param(
   [int]$Max        = 20000,
   [switch]$RefreshBlobs,
   [switch]$Execute,
-  [string]$TokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL
+  # Empty by default; Resolve-TokenFuncUrl also tries the environment and Key Vault.
+  [string]$TokenFuncUrl
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web
+
+. "$PSScriptRoot\archive-identity.ps1"
 
 $sp     = $PSScriptRoot
 $az     = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
@@ -60,46 +63,8 @@ $graph  = (Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.co
 $gh  = @{ Authorization = "Bearer $graph" }
 $uid = (Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/users/$Mailbox`?`$select=id" -Headers $gh).id
 
-# MUST match transform.ps1 and sweep-inbox.ps1: last 24 chars, '/'->'_', '+'->'-', '=' dropped
-function Get-IdTail([string]$id) {
-  $t = if ($id.Length -gt 24) { $id.Substring($id.Length - 24, 24) } else { $id }
-  $t.Replace('/','_').Replace('+','-').Replace('=','')
-}
-
-<#
-The k-token for a batch of messages, from the Function that owns the rule.
-
-Deliberately not reimplemented here. The token exists in exactly one place - a PowerShell
-copy that drifted by one character would not throw, it would quietly stop recognising
-archived mail and re-upload it.
-
-sentDateTime is Graph's record rather than the Date: header every existing token came from.
-That substitution is safe HERE and nowhere else: a wrong token makes this script think a
-message is missing, it re-queues it, and the pipeline archives it under the authoritative
-token - the same name it already has - and overwrites. Wrong costs bandwidth, not a
-duplicate. See the spec's "The sweeps get the cheap route the pipeline cannot have".
-#>
-function Get-KTokens {
-  param([array]$Messages, [string]$FuncUrl)
-  if (-not $FuncUrl -or -not $Messages.Count) { return @{} }
-  $map = @{}
-  for ($i = 0; $i -lt $Messages.Count; $i += 500) {
-    $chunk = $Messages[$i..([Math]::Min($i + 499, $Messages.Count - 1))]
-    try {
-      $body = @($chunk | ForEach-Object {
-        @{ id = $_.id; messageId = $_.internetMessageId; sentDateTime = $_.sentDateTime }
-      }) | ConvertTo-Json -Depth 4 -AsArray
-      $res = Invoke-RestMethod -Method Post -Uri "$FuncUrl&from=fields" `
-               -ContentType 'application/json' -Body $body -TimeoutSec 120
-      foreach ($r in $res) { if ($r.token) { $map[$r.id] = $r.token } }
-    } catch {
-      # No token means this batch falls back to legacy-tail matching only, which is how
-      # the script behaved before. Never fatal.
-      Write-Warning "token service unavailable for a batch of $($chunk.Count): $($_.Exception.Message)"
-    }
-  }
-  return $map
-}
+$TokenFuncUrl = Resolve-TokenFuncUrl -Explicit $TokenFuncUrl
+Write-Host ("k-token lookup: {0}" -f $(if ($TokenFuncUrl) { 'enabled' } else { 'DISABLED - legacy tails only' }))
 
 # Same rule as sweep-inbox.ps1: a folder leaf that is a well-formed RSE file number is a
 # classification a person already made. No hint is recoverable; a wrong one misfiles.
@@ -114,14 +79,16 @@ $skipFolders = @('Drafts','Deleted Items','Junk Email','Outbox','Conversation Hi
 # --- what is already archived -------------------------------------------------------------
 $dump = Join-Path $sp 'archive-blobs.txt'
 if ($RefreshBlobs -or -not (Test-Path $dump) -or ((Get-Date) - (Get-Item $dump).LastWriteTime).TotalHours -gt 6) {
-  Write-Host "listing the container (a few minutes) ..."
-  & $az storage blob list --account-name samatters --container-name matters `
-      --num-results "*" --auth-mode login --query "[].name" -o tsv 2>$null | Set-Content $dump
+  Write-Host "listing the container (paged REST, ~100k blobs/min) ..."
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $listed = Get-AllBlobNames -Account samatters -Container matters -Progress {
+    param($n) Write-Host ("  {0:n0} blobs, {1:n0}s ..." -f $n, $sw.Elapsed.TotalSeconds)
+  }
+  Set-Content -Path $dump -Value $listed
 }
 $names = @(Get-Content $dump)
 if ($names.Count -lt 100000) { throw "container listing returned only $($names.Count) blobs - refusing to decide from that" }
-$tails = New-Object 'System.Collections.Generic.HashSet[string]'
-foreach ($n in $names) { if ($n -match '\[([^\]]+)\]\.eml$') { [void]$tails.Add($Matches[1]) } }
+$tails = Get-ArchivedIdentities $names
 Write-Host "archive holds $($tails.Count) distinct messages"
 
 # --- Service Bus sender (same shape as sweep-inbox.ps1) -----------------------------------
