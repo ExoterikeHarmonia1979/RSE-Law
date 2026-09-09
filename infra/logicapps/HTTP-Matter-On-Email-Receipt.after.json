@@ -522,6 +522,9 @@
                             }
                           },
                           "runAfter": {
+                            "Email_Blob_Name": [
+                              "Succeeded"
+                            ],
                             "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
                               "Succeeded"
                             ]
@@ -529,9 +532,12 @@
                           "type": "ApiConnection"
                         },
                         "Email_Blob_Name": {
-                          "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', ''), '].eml')",
+                          "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', outputs('Message_Identifier'), '].eml')",
                           "runAfter": {
                             "Email_Subject_Clean": [
+                              "Succeeded"
+                            ],
+                            "Message_Identifier": [
                               "Succeeded"
                             ]
                           },
@@ -560,7 +566,7 @@
                                 "method": "post",
                                 "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                                 "queries": {
-                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', '')}/",
+                                  "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier')}/",
                                   "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
                                   "queryParametersSingleEncoded": true
                                 }
@@ -586,6 +592,28 @@
                           },
                           "type": "Foreach"
                         },
+                        "Get_Dedup_Token": {
+                          "inputs": {
+                            "body": "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')",
+                            "headers": {
+                              "Content-Type": "application/octet-stream"
+                            },
+                            "method": "POST",
+                            "retryPolicy": {
+                              "type": "none"
+                            },
+                            "uri": "@parameters('dedupTokenFuncUrl')"
+                          },
+                          "limit": {
+                            "timeout": "PT30S"
+                          },
+                          "runAfter": {
+                            "HTTP_Graph_API_Call_to_Get_Email_Message_Value": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "Http"
+                        },
                         "HTTP_Graph_API_Call_to_Get_Email_Message_Value": {
                           "inputs": {
                             "authentication": {
@@ -596,7 +624,7 @@
                             "uri": "https://graph.microsoft.com/v1.0/@{outputs('Get_OData_ID')}/$value"
                           },
                           "runAfter": {
-                            "Email_Blob_Name": [
+                            "Email_Subject_Clean": [
                               "Succeeded"
                             ]
                           },
@@ -606,6 +634,18 @@
                             }
                           },
                           "type": "Http"
+                        },
+                        "Message_Identifier": {
+                          "inputs": "@coalesce(body('Get_Dedup_Token')?['token'], replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', ''))",
+                          "runAfter": {
+                            "Get_Dedup_Token": [
+                              "Succeeded",
+                              "Failed",
+                              "TimedOut",
+                              "Skipped"
+                            ]
+                          },
+                          "type": "Compose"
                         }
                       },
                       "else": {
@@ -1293,6 +1333,10 @@
         "$connections": {
           "defaultValue": {},
           "type": "Object"
+        },
+        "dedupTokenFuncUrl": {
+          "defaultValue": "",
+          "type": "SecureString"
         }
       },
       "triggers": {
@@ -1494,6 +1538,9 @@
             "id": "/subscriptions/66268ff4-4804-4950-bfba-07b41a8660ec/providers/Microsoft.Web/locations/eastus/managedApis/sharepointonline"
           }
         }
+      },
+      "dedupTokenFuncUrl": {
+        "value": "__DEDUP_TOKEN_FUNC_URL__"
       }
     },
     "provisioningState": "Succeeded",

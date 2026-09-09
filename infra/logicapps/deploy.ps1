@@ -63,6 +63,22 @@ if (-not $Execute) { Write-Host "`nDRY RUN - re-run with -Execute to deploy"; re
 if ($check.Drift.Count -gt 0 -and -not $AcceptDrift) { throw "refusing to deploy over live drift; use -AcceptDrift to override" }
 
 # ------------------------------------------------------------------- deploy
+# after.json carries __DEDUP_TOKEN_FUNC_URL__ rather than the real URL, so the Function key
+# never sits in a tracked file. Fill it in here, at the last possible moment. Refusing when
+# it is unset is deliberate: deploying an empty URL would silently put every message on the
+# legacy-naming fallback, which looks exactly like success and would be found only by
+# noticing, days later, that no k-token blob had ever appeared.
+if ($new.properties.parameters.dedupTokenFuncUrl.value -eq '__DEDUP_TOKEN_FUNC_URL__') {
+  $tokenUrl = $env:DEDUP_TOKEN_FUNC_URL
+  if (-not $tokenUrl) {
+    throw "DEDUP_TOKEN_FUNC_URL is not set. after.json holds a placeholder, so deploying now " +
+          "would configure an empty token URL and quietly fall back to legacy naming for every " +
+          "message. Set it to the DedupTokenFunc URL including ?code=<key> and re-run."
+  }
+  $new.properties.parameters.dedupTokenFuncUrl.value = $tokenUrl
+  Write-Host "dedupTokenFuncUrl: substituted from DEDUP_TOKEN_FUNC_URL"
+}
+
 # Only the writable properties, and identity must be included or the PUT strips the
 # managed identity that every Graph call authenticates with.
 $payload = @{

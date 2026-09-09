@@ -9,7 +9,12 @@ param(
   [switch]$AcceptDrift,
   # Skip the drift check entirely - for working with no Azure access.
   [switch]$NoDriftCheck,
-  [string]$BaselinePath = "$PSScriptRoot\deployed.json"
+  [string]$BaselinePath = "$PSScriptRoot\deployed.json",
+  # DedupTokenFunc's URL, key included (?code=...) - same env var the sweep scripts
+  # already read (sweep-inbox.ps1, tools/sweep-older-mail.ps1, tools/reconcile-missed.ps1).
+  # Wired into the workflow as a parameter (Section 8 below), never inlined into the
+  # definition, so the key does not end up hardcoded in after.json/deployed.json.
+  [string]$DedupTokenFuncUrl = $env:DEDUP_TOKEN_FUNC_URL
 )
 $ErrorActionPreference = 'Stop'
 
@@ -335,14 +340,14 @@ $found.actions = @{
     # the substituted subject, so a blank-subject message still yields a usable blob stem
     inputs = "@" + (San "outputs('Subject_For_Matching')")
   }
-  Email_Blob_Name = @{
-    type = 'Compose'
-    runAfter = @{ Email_Subject_Clean = @('Succeeded') }
-    inputs = "@concat($emlStem, ' [', $idTail, '].eml')"
-  }
+  # Moved ahead of Email_Blob_Name (was: runAfter Email_Blob_Name). Get_Dedup_Token below
+  # consumes this action's body, and Email_Blob_Name now waits on Message_Identifier, which
+  # waits on Get_Dedup_Token - leaving the old order would be a runAfter cycle
+  # (Email_Blob_Name -> Message_Identifier -> Get_Dedup_Token -> this action -> Email_Blob_Name).
+  # The message body has to be fetched before it can be named, not after.
   HTTP_Graph_API_Call_to_Get_Email_Message_Value = @{
     type = 'Http'
-    runAfter = @{ Email_Blob_Name = @('Succeeded') }
+    runAfter = @{ Email_Subject_Clean = @('Succeeded') }
     runtimeConfiguration = @{ contentTransfer = @{ transferMode = 'Chunked' } }
     inputs = @{
       method = 'GET'
@@ -350,9 +355,59 @@ $found.actions = @{
       authentication = @{ type = 'ManagedServiceIdentity'; audience = 'https://graph.microsoft.com' }
     }
   }
+  Get_Dedup_Token = @{
+    type = 'Http'
+    runAfter = @{ HTTP_Graph_API_Call_to_Get_Email_Message_Value = @('Succeeded') }
+    <#
+    The k-token for this message, from the Function that owns the rule. Posting the MIME
+    rather than fields taken from Graph is deliberate: every existing token came from the
+    message's own Date: header, and Graph's sentDateTime is a second source of truth for
+    it. A one-second disagreement would write a second copy of an already-archived
+    message, which is the defect this change exists to remove.
+    #>
+    inputs = @{
+      method = 'POST'
+      uri    = "@parameters('dedupTokenFuncUrl')"
+      body   = "@body('HTTP_Graph_API_Call_to_Get_Email_Message_Value')"
+      headers = @{ 'Content-Type' = 'application/octet-stream' }
+      # Stated rather than inherited, because how long this action can hang IS the fallback
+      # story: naming is best-effort, and a message must not wait on a sick token service.
+      # 30s is generous against a call measured in hundreds of milliseconds, and a timeout
+      # lands in TimedOut, which Message_Identifier already treats as "use the legacy tail".
+      retryPolicy = @{ type = 'none' }
+    }
+    limit = @{ timeout = 'PT30S' }
+    # NO contentTransfer/Chunked here, deliberately. Chunked is right on the GET that pulls
+    # $value from Graph - it is how a large response is received. On an OUTGOING POST it
+    # means something else entirely: the workflow tries Logic Apps' chunked-upload
+    # negotiation, which the receiving endpoint has to implement, and an Azure Function does
+    # not. The Function then sees no usable body and answers 422 "no Message-ID or Date".
+    #
+    # This shipped and failed on 3 of 3 live messages before it was caught. It fails SAFE -
+    # Message_Identifier coalesced to the legacy tail and every message still archived - but
+    # it made the feature a silent no-op, which is exactly the shape of bug that survives a
+    # green deploy. The Step 6 probe had chunked on the GET only and passed; this action did
+    # not match it. Diagnosis: the same body POSTed by hand returned a token immediately.
+  }
+  Message_Identifier = @{
+    type = 'Compose'
+    # Succeeded OR Failed: a naming call must never be able to stop mail being archived.
+    # 422 means this message has no derivable identity; a 5xx or timeout means the service
+    # is unwell. Both fall back to the Graph-id tail, which is exactly today's behaviour.
+    runAfter = @{ Get_Dedup_Token = @('Succeeded', 'Failed', 'TimedOut', 'Skipped') }
+    inputs = "@coalesce(body('Get_Dedup_Token')?['token'], $idTail)"
+  }
+  Email_Blob_Name = @{
+    type = 'Compose'
+    runAfter = @{ Email_Subject_Clean = @('Succeeded'); Message_Identifier = @('Succeeded') }
+    inputs = "@concat($emlStem, ' [', outputs('Message_Identifier'), '].eml')"
+  }
   Create_blob_1 = @{
     type = 'ApiConnection'
-    runAfter = @{ HTTP_Graph_API_Call_to_Get_Email_Message_Value = @('Succeeded') }
+    # Email_Blob_Name added: it's a sibling of Get_Dedup_Token/Message_Identifier off the
+    # same HTTP-call dependency now, not a downstream of it, so this must wait on it
+    # explicitly or the blob could be written before outputs('Email_Blob_Name') exists.
+    runAfter = @{ HTTP_Graph_API_Call_to_Get_Email_Message_Value = @('Succeeded'); Email_Blob_Name = @('Succeeded') }
     inputs = @{
       host = $BLOB
       method = 'post'
@@ -396,15 +451,16 @@ $found.actions = @{
 
             A subfolder rather than a name suffix, so a downloaded file keeps its real name:
             "Invoice.pdf", not "Invoice [Q4TAMd2rHPEk].pdf". The segment is the same
-            deterministic message-id tail the .eml uses, so an attachment sits beside its own
-            message and re-running the sweep overwrites its own blob rather than duplicating.
+            Message_Identifier the .eml uses - the k-token, or its $idTail fallback when the
+            token call didn't produce one - so an attachment sits beside its own message and
+            re-running the sweep overwrites its own blob rather than duplicating.
 
             Nothing reads these by path: EmlPreviewFunc and EmlAttachmentNamesSkill both
             parse attachments out of the .eml, the index gets attachment_names from that
             skill, and refile-unsorted.ps1 excludes anything below the prefix either way.
             Attachments already written stay flat; only new writes are nested.
             #>
-            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{$idTail}/"
+            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier')}/"
             name       = "@$attStem"
             queryParametersSingleEncoded = $true
           }
@@ -682,6 +738,31 @@ $def.actions = @{
 $keep = @('servicebus','azureblob-1','sharepointonline')
 $conns = $res.properties.parameters.'$connections'.value
 foreach ($n in @($conns.Keys)) { if ($n -notin $keep) { $conns.Remove($n) | Out-Null } }
+
+# ------------------------------- 8. dedupTokenFuncUrl: config, not a literal
+# Same split as $connections above: the definition (properties.definition.parameters)
+# only declares the shape - name, type, a safe default - and the actual value lives in
+# properties.parameters, one level up, where deploy.ps1 sends it as part of the PUT
+# body but it is never baked into an action's inputs. Get_Dedup_Token reads it via
+# @parameters('dedupTokenFuncUrl'), so the Function URL and its key are configuration
+# the same way the connection ids are, not a string sitting in the workflow definition.
+#
+# SecureString, not String, and that difference is the whole point. deploy.ps1 writes ARM's
+# PUT response - including properties.parameters - straight into deployed.json, and
+# deployed.json is tracked and committed. A String parameter is echoed back verbatim, so the
+# first real deploy would have written this URL, '?code=<function key>' and all, into git
+# history, where it cannot be taken back. ARM redacts a SecureString on every read, so the
+# key never reaches the file. Checked before changing it: the only other parameter here is
+# $connections, which holds ARM resource ids and no secret, so nothing in this repo had
+# routed a credential through that path before.
+$def.parameters.dedupTokenFuncUrl = @{ type = 'SecureString'; defaultValue = '' }
+# A PLACEHOLDER, not the value, because $res is written to after.json and after.json is
+# tracked. SecureString stops ARM echoing the key back into deployed.json; it does nothing
+# about the copy this script writes locally, which would have carried '?code=<key>' into git
+# just as surely. deploy.ps1 substitutes the real URL from $env:DEDUP_TOKEN_FUNC_URL at PUT
+# time. Same convention as skillset.json's __FUNCTION_KEY__, which setup.ps1 fills in the
+# same way - a pattern this repo already relies on to keep a function key out of source.
+$res.properties.parameters.dedupTokenFuncUrl = @{ value = '__DEDUP_TOKEN_FUNC_URL__' }
 
 # before.json was captured while the workflow was disabled, and a PUT is a full
 # replace - carrying that state through silently disables production on deploy.
