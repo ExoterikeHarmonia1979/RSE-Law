@@ -172,8 +172,29 @@ $idx = Join-Path $sp 'archive-tails.txt'
 # Read first: an index built under a different extraction rule is stale however new it is,
 # and Read-ArchiveIndex is the only thing that can tell.
 $archived = Read-ArchiveIndex $idx
+<#
+An index older than the window is worse than no index: it reports mail as missing purely
+because it was archived after the snapshot was taken.
+
+Measured on the 19:42Z run: window 3 hours, index 1h40m old, 288 of 542 messages called
+missing - and 246 of those 288 arrived AFTER the index snapshot, so the index could not have
+contained them however well the pipeline worked. A 53% "loss rate" that was 85% arithmetic.
+The waste is real (every run re-enqueues a few hundred already-archived messages) but the
+worse cost is that it buries the real signal: the residual 42 are indistinguishable from the
+noise unless you go and check.
+
+So the index must cover the window. If its snapshot predates the window start, rebuild
+regardless of -IndexMaxAgeHours; that parameter caps how OLD an index may be, which is a
+different question from whether it reaches back far enough.
+#>
+$idxTime = if ($archived) { (Get-Item $idx).LastWriteTime.ToUniversalTime() } else { [datetime]::MinValue }
 $stale = $RefreshIndex -or -not $archived -or
-         ((Get-Date) - (Get-Item $idx).LastWriteTime).TotalHours -gt $IndexMaxAgeHours
+         ((Get-Date) - (Get-Item $idx).LastWriteTime).TotalHours -gt $IndexMaxAgeHours -or
+         $idxTime -lt $since
+if ($stale -and $archived -and $idxTime -lt $since) {
+  Write-Host ("index snapshot {0} predates the window start {1} - rebuilding so it covers the window" -f
+              $idxTime.ToString('u'), $since.ToString('u'))
+}
 if ($stale) {
   Write-Host "building the archive index (paged REST listing, ~100k blobs/min) ..."
   $sw = [Diagnostics.Stopwatch]::StartNew()

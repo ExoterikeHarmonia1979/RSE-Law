@@ -52,7 +52,16 @@ and the storage account):
 #>
 param(
   [double]$FloorHours = 3,
-  [int]$IndexMaxAgeHours = 6,
+  # 0 = rebuild every run. A cached index cannot contain mail archived after its snapshot,
+  # so every message received since then is reported missing however well the pipeline
+  # worked. At 6 hours against a 3-hour window that dominated the result: the 19:42Z run
+  # called 288 of 542 messages missing, and 246 of them had simply arrived after the
+  # snapshot. Re-enqueuing those is harmless (names are deterministic, so it overwrites)
+  # but it buries the real signal - the residual 42 - in noise nobody can filter.
+  #
+  # The listing costs ~12-19 minutes of the task's PT1H budget, every 2 hours. That is the
+  # price of the number meaning something.
+  [int]$IndexMaxAgeHours = 0,
   [int]$KeepLogDays = 30
 )
 $ErrorActionPreference = 'Stop'
