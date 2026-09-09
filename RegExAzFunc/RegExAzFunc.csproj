@@ -20,7 +20,16 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
-    <PackageReference Include="MimeKit" Version="4.9.0" />
+    <!--
+      4.15.1 is the first release without CVE-2026-30227 (CRLF injection via quoted
+      local-parts). Not reachable here - nothing constructs a MailboxAddress from
+      untrusted input or opens an SMTP session; MimeKit is only ever used to parse
+      stored mail. Pinned to the patch rather than to latest because DedupToken's
+      output has to stay byte-identical to the tokens already in the container, so
+      the smallest delta that clears the advisory is the right one.
+      DedupTokenConformanceTests is what proves that held.
+    -->
+    <PackageReference Include="MimeKit" Version="4.15.1" />
     <PackageReference Include="MsgReader" Version="6.1.0" />
   </ItemGroup>
 
