@@ -564,6 +564,72 @@ def read_validated(path):
 
 # ── survivor readability ─────────────────────────────────────────────────────────────────
 
+def cmd_selftest_token(args):
+    """Prove a read RECOVERS from a dead storage token, rather than merely avoiding one.
+
+    A probe run that starts with a fresh token finishes inside its lifetime and never meets a
+    401, so "the run completed" proves the bug is avoided - not that the recovery works.
+    Those are different claims, and only the second is what the fix added. This forces the
+    failure: poison the token, read, and require the read to succeed anyway.
+
+    The bug this pins: az returns expiresOn and expires_on but no expires_in, so the old
+    `data.get('expires_in', 3000)` asserted 50 minutes of validity on every call regardless
+    of truth, and az can hand back a cached token with minutes left. When it died mid-run,
+    token() kept returning the dead one - its fictional expiry had not passed - and the retry
+    re-presented the same dead credential. 17,437 survivors read, then every one of the next
+    3,000 "unreadable". Unreadable survivors are excluded from the deletion pass, so this
+    would have silently dropped thousands of real groups from the plan while looking careful.
+
+    Needs Azure and one real blob; it is not part of the offline `selftest`.
+    """
+    import urllib.error
+
+    fails = []
+
+    def check(name, cond):
+        print(f"{'ok  ' if cond else 'FAIL'} {name}")
+        if not cond:
+            fails.append(name)
+
+    groups = read_validated(args.validated if hasattr(args, 'validated') else VALIDATED)
+    blob = next((g['keep'] for g in groups.values() if g['keep']), None)
+    if not blob:
+        sys.exit('no validated survivor to read; run validate first')
+    print(f'target blob: {blob}\n')
+
+    plan = load_planner()
+    s = plan.Storage()
+
+    raw, _ = s.head_bytes(blob, 4096)
+    check('healthy read returns bytes', len(raw) > 0)
+
+    mins = (s._expires - time.time()) / 60
+    check(f'expiry came from az, not the 3000s guess ({mins:.0f} min left)',
+          mins > 5 and abs(mins - 50) > 1)
+
+    good = s._token
+    s._token = 'not-a-real-token'
+    rejected = False
+    try:
+        s.head_bytes(blob, 4096)
+    except urllib.error.HTTPError as e:
+        rejected = e.code in (401, 403)
+    except Exception:                                              # noqa: BLE001
+        rejected = True
+    check('a poisoned token really is rejected', rejected)
+
+    s.token(force=True)
+    check('force=True replaced the dead token', s._token not in ('not-a-real-token', None))
+    raw2, _ = s.head_bytes(blob, 4096)
+    check('the read succeeds again after a forced re-mint', raw2 == raw)
+
+    check('normal calls still reuse the cached token', s.token() is s.token())
+
+    print()
+    print('FAILED: ' + ', '.join(fails) if fails else 'token recovery proven, not assumed')
+    return 1 if fails else 0
+
+
 def cmd_probe(args):
     """Fetch and parse every survivor before anything is deleted.
 
@@ -1020,6 +1086,8 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
 
     sub.add_parser('selftest', help='prove every validation check can fail')
+    sub.add_parser('selftest-token',
+                   help='prove a read RECOVERS from a dead storage token (needs Azure)')
 
     li = sub.add_parser('list')
     li.add_argument('--out')
@@ -1067,7 +1135,7 @@ def main():
 
     args = ap.parse_args()
     return {
-        'selftest': cmd_selftest,
+        'selftest': cmd_selftest, 'selftest-token': cmd_selftest_token,
         'list': cmd_list, 'validate': cmd_validate, 'probe': cmd_probe,
         'dryrun': cmd_dryrun, 'delete': cmd_delete, 'softlist': cmd_softlist,
         'undelete': cmd_undelete, 'head': cmd_head, 'identities': cmd_identities,
