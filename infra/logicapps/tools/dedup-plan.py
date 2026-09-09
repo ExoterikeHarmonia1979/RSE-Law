@@ -653,8 +653,20 @@ def cmd_conformance(args):
 
     selftest proves ingest-key.py still agrees with what it wrote. This proves the C#
     Function agrees too - the claim that lets the pipeline and the ingest share one
-    identity. Sends only headers, never whole messages.
+    identity.
+
+    Sends WHOLE blobs, not headers. An OLE2 .msg has no header block to slice - the
+    property stream has to be parsed - so head_bytes_sized fetches up to 40 MB per blob.
+    (The docstring here used to claim "only headers, never whole messages", which was
+    never true and is the sort of thing someone trusts when sizing a run.)
+
+    The sample is RANDOM over the whole index, seeded. It used to read the first
+    sample*4 matching rows and take every 4th, which is the head of a file sorted by blob
+    path - so a "random" 40 came from a handful of adjacent folders. That is how the
+    Windows-1252 failures all landed in 02.426/DeletedItems: not a coincidence, a
+    contiguous sample. Same --seed convention as `review`, so a run is reproducible.
     """
+    import random
     import urllib.error
     import urllib.request
     key_mod = load_ingest_key()
@@ -667,10 +679,12 @@ def cmd_conformance(args):
             blob = line.split('\t', 1)[0]
             if token_from_name(blob):
                 named.append(blob)
-            if len(named) >= args.sample * 4:
-                break
-    sample = named[::4][:args.sample]
-    print(f'checking {len(sample)} ingested blobs against {args.func}\n')
+    if not named:
+        sys.exit('no ingested (k-token named) blobs in the index - nothing to check')
+    rnd = random.Random(args.seed)
+    sample = rnd.sample(named, min(args.sample, len(named)))
+    print(f'checking {len(sample)} of {len(named):,} ingested blobs '
+          f'(random, seed {args.seed}) against the Function\n')
 
     ok = bad = failed = 0
     bad_by_ext = {}
@@ -772,6 +786,7 @@ def main():
     cf.add_argument('--sample', type=int, default=40)
     cf.add_argument('--index', default=INDEX)
     cf.add_argument('--func', required=True, help='DedupTokenFunc URL including ?code=')
+    cf.add_argument('--seed', type=int, default=1, help='same seed gives the same sample')
 
     args = ap.parse_args()
     if args.cmd == 'selftest-grouping':

@@ -118,4 +118,26 @@ public class DedupTokenTests
 
         Assert.Null(token);
     }
+
+    /// <summary>
+    /// A date with no timezone must keep its digits, whatever the host's timezone is.
+    ///
+    /// This parsed with DateTimeStyles.RoundtripKind, which gives a zone-less string the
+    /// HOST's offset - so the token depended on the machine. Azure Functions run UTC, which
+    /// is why nothing was ever wrong in production, but a WEBSITE_TIME_ZONE app setting
+    /// would have silently re-keyed every message through this branch.
+    ///
+    /// The expected values are ingest-key.py's: sent_utc() converts only when tzinfo is
+    /// present and otherwise formats the naive digits unchanged. This test passes on any
+    /// host with AssumeUniversal, and fails on a non-UTC host without it.
+    /// </summary>
+    [Fact]
+    public void SentUtc_treats_a_zoneless_date_as_utc_not_as_host_local_time()
+    {
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("2026-03-20T21:52:57"));
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("2026-03-20 21:52:57"));
+
+        // An explicit offset still wins - AssumeUniversal only fills in a missing one.
+        Assert.Equal("2026-03-20T21:52:57Z", DedupToken.SentUtc("2026-03-20T14:52:57-07:00"));
+    }
 }

@@ -79,6 +79,35 @@ if ($new.properties.parameters.dedupTokenFuncUrl.value -eq '__DEDUP_TOKEN_FUNC_U
   Write-Host "dedupTokenFuncUrl: substituted from DEDUP_TOKEN_FUNC_URL"
 }
 
+# Validate what is about to be DEPLOYED, not what happened to be in the file.
+#
+# The check above only fires when after.json still holds the literal placeholder. Anything
+# else - an empty string, a half-edited value, a regenerated after.json that lost the
+# placeholder - skipped every guard and deployed silently. That is the same success-shaped
+# failure the comment above describes: an unusable URL fails Get_Dedup_Token on every
+# message, Message_Identifier falls back to the legacy tail, every run still reports
+# Succeeded, and the only symptom is that no k-token blob ever appears again.
+$final = $new.properties.parameters.dedupTokenFuncUrl.value
+$parsed = $null
+if ([string]::IsNullOrWhiteSpace($final)) {
+  throw "dedupTokenFuncUrl is empty. Deploying that puts every message on the legacy-naming " +
+        "fallback while reporting success. Set DEDUP_TOKEN_FUNC_URL (or fix after.json) and re-run."
+}
+if ($final -like '*__*__*') {
+  throw "dedupTokenFuncUrl is still a placeholder ('$final'). Set DEDUP_TOKEN_FUNC_URL and re-run."
+}
+if (-not [uri]::TryCreate($final, [UriKind]::Absolute, [ref]$parsed) -or
+    $parsed.Scheme -notin @('http','https')) {
+  throw "dedupTokenFuncUrl is not an absolute http(s) URL. Deploying it would silently disable k-token naming."
+}
+# AuthorizationLevel.Function means no key is a 401 on every call - which fails safe, and so
+# is invisible. Warn rather than throw, in case the function is ever made anonymous.
+if ($parsed.Query -notmatch '(^|[?&])code=') {
+  Write-Warning "dedupTokenFuncUrl has no ?code= key. DedupTokenFunc requires one, so every " +
+                "message would fall back to legacy naming while every run still reported success."
+}
+Write-Host "dedupTokenFuncUrl: $($parsed.Scheme)://$($parsed.Host)$($parsed.AbsolutePath) (key $(if ($parsed.Query -match 'code=') { 'present' } else { 'MISSING' }))"
+
 # Only the writable properties, and identity must be included or the PUT strips the
 # managed identity that every Graph call authenticates with.
 $payload = @{

@@ -56,7 +56,23 @@ internal static class DedupToken
         {
             return dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
         }
-        if (DateTimeOffset.TryParse(rawDate, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTimeOffset iso))
+        // AssumeUniversal, not RoundtripKind. A zone-less string ("2026-03-20 21:52:57") has
+        // no offset to roundtrip, so RoundtripKind applied the HOST's offset and
+        // ToUniversalTime then shifted the digits - making the token depend on the Function
+        // host's timezone. Azure Functions run UTC, so nothing was wrong today, but a
+        // WEBSITE_TIME_ZONE app setting would have silently re-keyed every message parsed
+        // through this branch, which is the same silent-duplicate defect this file exists to
+        // remove.
+        //
+        // Assuming UTC is not a guess: it is what ingest-key.py does, and the 401,170 tokens
+        // it wrote are the ones this must agree with. Its sent_utc() converts only when
+        // tzinfo is present ("dt.astimezone(utc) if dt.tzinfo else dt") and otherwise
+        // formats the naive wall-clock digits unchanged. AssumeUniversal | AdjustToUniversal
+        // reproduces that exactly. A string that DOES carry an offset is unaffected - the
+        // offset still wins.
+        if (DateTimeOffset.TryParse(rawDate, CultureInfo.InvariantCulture,
+                                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                                    out DateTimeOffset iso))
         {
             return iso.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
         }
@@ -115,6 +131,18 @@ internal static class DedupToken
                 string? msgSent = SentUtc(hdrs?.Date);
                 if (msgSent == null && msg.SentOn.HasValue)
                 {
+                    // SentOn is a DateTimeOffset, so it carries its own offset and
+                    // ToUniversalTime() is unambiguous - there is no host-timezone coupling
+                    // here, unlike the string-parsing branch in SentUtc. (Worth stating
+                    // because it looks like the same shape and is not; a review flagged this
+                    // line as needing DateTime.SpecifyKind, which does not compile against
+                    // DateTimeOffset and would not have been a fix if it did.)
+                    //
+                    // Residual, outside this file: MsgReader builds that offset when it reads
+                    // the MAPI property. If it ever constructs one from a Kind-Unspecified
+                    // DateTime, .NET applies the host's offset inside the library and no
+                    // change here can see it. The conformance run is what would catch that,
+                    // because it compares against tokens ingest-key.py already wrote.
                     msgSent = msg.SentOn.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
                 }
                 return (Key(msgMid, msgSent), msgMid, msgSent);
