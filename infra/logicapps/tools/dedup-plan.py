@@ -188,7 +188,16 @@ def load_candidates(index_path, limit=None):
             parts = line.rstrip('\n').split('\t')
             if len(parts) < 3 or parts[2] != 'ok' or not parts[1]:
                 continue
-            by_mid.setdefault(parts[1], []).append(parts[0])
+            # A blob path may appear more than once in the index - paging returns the same
+            # message twice, and collision-truth.ps1 carries a warning about exactly this.
+            # Appending blindly puts one path in its group twice, and choose_survivor then
+            # labels the second copy DELETE: the manifest generated before this fix told
+            # the executor to delete the sole copy of 8,819 messages, each row reading
+            # "duplicate of <itself>". A blob cannot be a duplicate of itself; a group's
+            # membership is its set of distinct paths.
+            paths = by_mid.setdefault(parts[1], [])
+            if parts[0] not in paths:
+                paths.append(parts[0])
 
     groups, skipped_cross = [], 0
     for mid, blobs in by_mid.items():
@@ -219,6 +228,71 @@ def choose_survivor(rows):
 
 
 # ── commands ─────────────────────────────────────────────────────────────────────────────
+
+def cmd_selftest_grouping(args):
+    """A repeated row in the index must never become an order to delete the only copy.
+
+    Regression test for the worst defect this tool has had. messageid-index.tsv can list one
+    blob path twice under a message id (paging returns the same message twice - the same trap
+    collision-truth.ps1 warns about). load_candidates appended blindly, so the path joined its
+    group twice, and the KEEP/DELETE loop compared rows with `r is survivor` - object
+    identity. Two dicts for one path are not the same object, so the survivor's own path was
+    emitted as DELETE, reason "duplicate of <itself>".
+
+    That reached a signed-off manifest: 8,819 of 47,121 groups, every one of them an
+    instruction to delete the sole copy of a message. It was caught by the executor
+    re-reading the container, not by anything here.
+
+    Offline and fast - no network, no storage account, no index file. Run it after touching
+    load_candidates or choose_survivor.
+    """
+    import tempfile
+
+    fails = []
+
+    def check(name, cond):
+        print(f"{'ok  ' if cond else 'FAIL'} {name}")
+        if not cond:
+            fails.append(name)
+
+    idx = os.path.join(tempfile.mkdtemp(), 'messageid-index.tsv')
+    with open(idx, 'w', encoding='utf-8') as fh:
+        fh.write('blob\tmessageId\tstatus\n')
+        # a real duplicate pair, but with the first path listed twice
+        fh.write('matters/01.001/Emails/a [AAA].eml\t<m1@x>\tok\n')
+        fh.write('matters/01.001/Emails/a [AAA].eml\t<m1@x>\tok\n')
+        fh.write('matters/01.001/Emails/b [BBB].eml\t<m1@x>\tok\n')
+        # a "group" that is one path twice: not a duplicate group at all
+        fh.write('matters/01.001/Emails/c [CCC].eml\t<m2@x>\tok\n')
+        fh.write('matters/01.001/Emails/c [CCC].eml\t<m2@x>\tok\n')
+
+    by_mid = dict(load_candidates(idx)[0])
+    check('a repeated path collapses to one group member',
+          by_mid.get('<m1@x>') == ['matters/01.001/Emails/a [AAA].eml',
+                                   'matters/01.001/Emails/b [BBB].eml'])
+    check('one path listed twice is not a duplicate group',
+          '<m2@x>' not in by_mid)
+
+    # Two distinct dicts for one blob - what the old comparison could not tell apart.
+    rows = [
+        {'blob': 'matters/01.001/Emails/a [AAA].eml', 'scheme': 'legacy', 'lastModified': '2026-01-01T00:00:00Z'},
+        {'blob': 'matters/01.001/Emails/a [AAA].eml', 'scheme': 'legacy', 'lastModified': '2026-01-01T00:00:00Z'},
+        {'blob': 'matters/01.001/Emails/b [BBB].eml', 'scheme': 'ktoken', 'lastModified': '2026-02-01T00:00:00Z'},
+    ]
+    survivor = choose_survivor(rows)
+    check('every row naming the survivor path is KEEP',
+          [r['blob'] == survivor['blob'] for r in rows] == [True, True, False])
+    # The control: without it, the two checks above could pass against code that never had
+    # the bug, and this test would prove nothing about the fix.
+    check('control - the old `is` comparison does mislabel one of them',
+          [r is survivor for r in rows] == [True, False, False])
+    check('survivor is the legacy copy, per the signed-off keep-rule',
+          survivor['blob'].endswith('a [AAA].eml'))
+
+    print()
+    print('FAILED: ' + ', '.join(fails) if fails else 'grouping selftest passed')
+    return 1 if fails else 0
+
 
 def cmd_selftest(args):
     """Prove the imported token function reproduces tokens already in blob names.
@@ -370,7 +444,12 @@ def cmd_plan(args):
             real_groups += 1
             survivor = choose_survivor(rows)
             for r in rows:
-                keep = r is survivor
+                # By PATH, not by object identity. `r is survivor` asks "is this the same
+                # dict?", and two dicts describing one blob are not, so the survivor's own
+                # path could be emitted as DELETE - see load_candidates above. Belt and
+                # braces with the dedup there: either fix alone closes the hole, and a
+                # blob must never be listed as a duplicate of itself.
+                keep = r['blob'] == survivor['blob']
                 reason = ('survivor: original bytes' if keep and r['scheme'] == 'legacy'
                           else 'survivor: oldest' if keep
                           else f'duplicate of {survivor["blob"]}')
@@ -674,6 +753,9 @@ def main():
     st.add_argument('--sample', type=int, default=40)
     st.add_argument('--index', default=INDEX)
 
+    sub.add_parser('selftest-grouping',
+                   help='offline: prove a repeated index row cannot become a delete order')
+
     pl = sub.add_parser('plan', help='write the dry-run manifest')
     pl.add_argument('--out')
     pl.add_argument('--index', default=INDEX)
@@ -692,6 +774,8 @@ def main():
     cf.add_argument('--func', required=True, help='DedupTokenFunc URL including ?code=')
 
     args = ap.parse_args()
+    if args.cmd == 'selftest-grouping':
+        return cmd_selftest_grouping(args)
     if args.cmd == 'review':
         return cmd_review(args)
     if args.cmd == 'conformance':
