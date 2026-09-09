@@ -25,3 +25,14 @@ older-mail-*.csv
 # matter numbers and message subjects - operational scratch, never source.
 dedup-manifest*.tsv
 dedup-resolved.tsv
+
+# Execution artefacts for the same cleanup. All list real blob paths, so the same rule
+# applies. dedup-deleted.log is a run's resume checkpoint and is meaningless outside it.
+current-blobs.tsv
+current-blobs.tsv.partial
+dedup-validated.tsv
+dedup-skipped.tsv
+dedup-deletes.txt
+dedup-deleted.log
+dedup-unreadable-keeps.tsv
+dedup-staleness-findings.txt
