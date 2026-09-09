@@ -146,9 +146,34 @@ function Get-AllBlobNames {
     $u = "$root`?restype=container&comp=list&maxresults=5000"
     if ($Prefix) { $u += "&prefix=$([uri]::EscapeDataString($Prefix))" }
     if ($marker) { $u += "&marker=$([uri]::EscapeDataString($marker))" }
-    # Deliberately unguarded: a failed page must throw. The old code sent the listing's
-    # stderr to $null, which is why an hour of failure produced no diagnosis at all.
-    $resp = Invoke-WebRequest -Uri $u -Headers $hdr -UseBasicParsing
+    <#
+    Retry a page a few times, then throw.
+
+    "Throw on failure" was the right half of the lesson - the old code sent the listing's
+    stderr to $null, so an hour of failure produced no diagnosis at all. But throwing on the
+    FIRST failure is its own bug: this walk is ~210 requests over ~12 minutes, so a single
+    transient blip discards the whole listing. That is not hypothetical either - the
+    15:42Z scheduled run died 3.5 minutes in with "the connected party did not properly
+    respond", while a bulk read was running against the same account.
+
+    So: transient failures are absorbed, a persistent one still throws with its real error
+    and the wrapper still logs "=== FAILED ===". The marker is not advanced until a page
+    succeeds, so a retry re-requests the same page and no blob is skipped.
+    #>
+    $resp = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+      try { $resp = Invoke-WebRequest -Uri $u -Headers $hdr -UseBasicParsing -TimeoutSec 120; break }
+      catch {
+        if ($attempt -eq 5) { throw }
+        $wait = [Math]::Pow(2, $attempt)   # 2s, 4s, 8s, 16s
+        Write-Warning ("listing page {0} failed (attempt {1}/5), retrying in {2}s: {3}" -f
+                       ($pages + 1), $attempt, $wait, $_.Exception.Message)
+        Start-Sleep -Seconds $wait
+        # A long listing can outlive its token; a 403 here looks like any other failure.
+        $hdr['Authorization'] = "Bearer $(NewStorageToken)"
+        $tokenAge.Restart()
+      }
+    }
     # In PowerShell 7 .Content is already a string, but it still carries the UTF-8 BOM,
     # which a bare [xml] cast will not parse.
     $xml = [xml]($resp.Content -replace "^﻿", '')
