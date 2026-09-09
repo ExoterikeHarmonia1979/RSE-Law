@@ -72,10 +72,65 @@ param(
   # Left empty deliberately: Resolve-TokenFuncUrl below also tries the environment and Key
   # Vault. Defaulting it to $env: here would have hidden the Key Vault leg from the scheduled
   # run, which is the environment that has no environment.
-  [string]$TokenFuncUrl
+  [string]$TokenFuncUrl,
+  # Runs the offline negative controls and exits. Placed before every credential and
+  # network call so it works on a box with no az login, like dedup-execute.py's selftest.
+  [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web
+
+<#
+Meeting traffic is excluded from the archive BY CLIENT INSTRUCTION - the firm does not want
+it propagated - and transform.ps1 already refuses it, matching the substring 'eventMessage'
+against the message's @odata.type. Graph returns eventMessage, eventMessageRequest or
+eventMessageResponse for the three forms and no type at all for ordinary mail, so the
+substring covers all three and nothing else.
+
+The reconciler has to agree with that guard, and until now it did not. It listed calendar
+items, correctly found them absent from the archive, enqueued them, and the Logic App
+correctly refused them - so the same messages were reported missing and re-queued on every
+run, forever. Measured on the 2026-09-09 16:34Z run: 69 of 165 reported-missing messages
+(41%) had a meeting-response subject prefix, and invitations carry no prefix at all, so the
+true share was higher. 13 of a sample of 40 had subjects that appear nowhere among 1.04
+million blob names, which is what deliberate non-archiving looks like from outside.
+
+The cost was never lost mail - it is wasted enqueues and a missing-count nobody can read.
+The type is tested, never who is copied: an earlier From/To 'calendar' string test was 98%
+false-positive because calendar@rse-law.com is routinely copied on real matter mail.
+#>
+function Test-IsCalendarItem($Message) {
+  $t = "$($Message.'@odata.type')"
+  return $t -like '*eventMessage*'
+}
+
+if ($SelfTest) {
+  $fail = @()
+  function Check($name, $got, $want) {
+    if ($got -eq $want) { Write-Host "  ok   $name" }
+    else { Write-Host "  FAIL $name (got '$got', wanted '$want')"; $script:fail += $name }
+  }
+  Write-Host 'calendar guard:'
+  # All three derived types Graph returns for meeting traffic must be caught. transform.ps1
+  # matches the substring 'eventMessage' for exactly this reason, and this has to agree with
+  # it: a message the Logic App refuses but the reconciler enqueues is re-queued forever.
+  Check 'eventMessage caught'         (Test-IsCalendarItem @{ '@odata.type' = '#microsoft.graph.eventMessage' })         $true
+  Check 'eventMessageRequest caught'  (Test-IsCalendarItem @{ '@odata.type' = '#microsoft.graph.eventMessageRequest' })  $true
+  Check 'eventMessageResponse caught' (Test-IsCalendarItem @{ '@odata.type' = '#microsoft.graph.eventMessageResponse' }) $true
+  # Graph omits @odata.type for an ordinary message, so absent must mean "not calendar".
+  # Getting this backwards would skip every real message and archive nothing.
+  Check 'absent type is ordinary mail' (Test-IsCalendarItem @{ subject = 'Re: 100.079 discovery' })                      $false
+  Check 'explicit message type passes' (Test-IsCalendarItem @{ '@odata.type' = '#microsoft.graph.message' })             $false
+  # The guard tests the type, never who is copied. An earlier From/To 'calendar' string test
+  # was 98% false-positive because calendar@rse-law.com is routinely copied on matter mail.
+  Check 'calendar in address not caught' (Test-IsCalendarItem @{
+      subject = 'MCB/EHT 100.079 - CMC/OSC re Failure to File POS'
+      from    = @{ emailAddress = @{ address = 'calendar@rse-law.com' } } })                                             $false
+  Write-Host ''
+  if ($fail.Count) { Write-Host "$($fail.Count) control(s) misbehaved: $($fail -join ', ')"; exit 1 }
+  Write-Host 'all calendar-guard controls behaved as specified.'
+  exit 0
+}
 
 . "$PSScriptRoot\archive-identity.ps1"
 
@@ -263,7 +318,7 @@ $skipFolders = @('Drafts','Deleted Items','Junk Email','Outbox','Conversation Hi
 
 # --- 5. compare and enqueue ---------------------------------------------------------------
 $stamp   = $since.ToString('yyyy-MM-ddTHH:mm:ssZ')
-$total   = 0; $gap = 0; $queued = 0; $errors = 0; $skipped = 0
+$total   = 0; $gap = 0; $queued = 0; $errors = 0; $skipped = 0; $calendar = 0
 $report  = @()
 $batch   = @()
 
@@ -275,6 +330,11 @@ foreach ($box in $boxes) {
   $folderHint = @{}
   $seen = 0; $missing = 0
   $u = "https://graph.microsoft.com/v1.0/users/$uid/messages?`$filter=receivedDateTime ge $stamp" +
+       # No @odata.type here, deliberately. Graph rejects it outright - "Term '@odata.type'
+       # is not valid in a $select or $expand expression" (BadRequest) - which would fail
+       # every page of every run. It does not need requesting: Graph emits @odata.type
+       # automatically for a derived type, and omits it for an ordinary message, which is
+       # exactly the distinction the guard tests.
        "&`$select=id,subject,receivedDateTime,parentFolderId,internetMessageId,sentDateTime&`$top=200"
   while ($u -and $queued -lt $Max) {
     $page = $null
@@ -302,6 +362,12 @@ foreach ($box in $boxes) {
       $ktok = $kTokens[$m.id]
       if ($archived.Contains($tail) -or ($ktok -and $archived.Contains($ktok))) { continue }
       $missing++; $gap++
+
+      # Before the folder lookup, because this needs no Graph call and most of what reaches
+      # here is calendar traffic. Counted separately from bins/drafts: they are skipped for
+      # different reasons and one number covering both would hide how much of the residual
+      # is the known-correct exclusion rather than a gap.
+      if (Test-IsCalendarItem $m) { $missing--; $gap--; $calendar++; continue }
 
       # The folder is needed twice - to exclude bins and drafts, and for the matter hint - so
       # it is resolved once and cached per mailbox. Looked up only for messages that are
@@ -370,8 +436,8 @@ $csv = Join-Path $sp ("missed-reconcile-{0}.csv" -f (Get-Date -Format 'yyyyMMdd-
 $report | Export-Csv $csv -NoTypeInformation -Encoding utf8
 
 Write-Host ""
-Write-Host ("{0}: {1} messages checked, {2} missing from the archive, {3} enqueued, {5} skipped (bins/drafts), {4} errors" -f `
-  $(if ($Execute) { 'EXECUTED' } else { 'DRY RUN' }), $total, $gap, $(if ($Execute) { $queued } else { 0 }), $errors, $skipped)
+Write-Host ("{0}: {1} messages checked, {2} missing from the archive, {3} enqueued, {5} skipped (bins/drafts), {6} calendar (excluded by design), {4} errors" -f `
+  $(if ($Execute) { 'EXECUTED' } else { 'DRY RUN' }), $total, $gap, $(if ($Execute) { $queued } else { 0 }), $errors, $skipped, $calendar)
 Write-Host "detail: $csv"
 if (-not $Execute -and $gap -gt 0) { Write-Host "re-run with -Execute to enqueue them." }
 
