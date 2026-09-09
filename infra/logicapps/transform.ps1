@@ -2,8 +2,12 @@
 # Transform HTTP-Matter-On-Email-Receipt: remove SharePoint site/library work,
 # keep blob archiving + matter lookups, fix correctness bugs, add peek-lock durability.
 param(
-  [string]$InPath  = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.before.json",
-  [string]$OutPath = "C:\Development\REPO\RSE-Law\infra\logicapps\HTTP-Matter-On-Email-Receipt.after.json",
+  # $PSScriptRoot, not an absolute path into the main checkout. Hardcoding it meant running
+  # this from a worktree silently rewrote the OTHER checkout's after.json - editing one tree
+  # and deploying another - and once the main checkout held the file open, it failed outright
+  # with "Access to the path is denied" while sitting next to a perfectly writable copy.
+  [string]$InPath  = "$PSScriptRoot\HTTP-Matter-On-Email-Receipt.before.json",
+  [string]$OutPath = "$PSScriptRoot\HTTP-Matter-On-Email-Receipt.after.json",
   # Regenerate even though the live workflow has been edited outside this repo.
   # Only correct once whatever changed live is also expressed below.
   [switch]$AcceptDrift,
@@ -392,10 +396,61 @@ $found.actions = @{
     runAfter = @{ Get_Dedup_Token = @('Succeeded', 'Failed', 'TimedOut', 'Skipped') }
     inputs = "@coalesce(body('Get_Dedup_Token')?['token'], $idTail)"
   }
+  <#
+  The runAfter above makes this action tolerate a failed CALL. It does not make the
+  EXPRESSION safe, and those are different things.
+
+  ?['token'] survives a null body. It does not survive a body of the wrong TYPE: Logic Apps
+  decides a response body's type from its Content-Type, and selecting a property from a
+  string raises InvalidTemplate. Message_Identifier would then Fail, Email_Blob_Name would
+  be skipped, Create_blob_1 with it, and the message would be abandoned back to the queue
+  and dead-lettered after max delivery count - the exact loss the For_each_Attachment null
+  bug caused, arriving through the action added to prevent duplicates.
+
+  Measured 2026-09-09, every error this Function host actually produces is safe:
+      our 422 (no derivable identity)  application/json  {"error":"..."}  -> object, null token
+      401 missing/!bad key             no content-type   empty body       -> null
+      404 unknown route                no content-type   empty body       -> null
+  The unsafe shape is text/html, which the App Service front end returns for 429 and 503 -
+  throttling and cold-start failures, i.e. exactly the transient pressure that makes a
+  naming call fail in the first place. That could not be triggered on demand, so it is
+  neither proven nor disproven.
+
+  Rather than leave mail loss resting on an untriggerable case, this makes the graph carry
+  the guarantee instead of the expression. Whatever Message_Identifier does - succeed, fail
+  on a type error, time out - one of these two Composes produces an identifier, and
+  Email_Blob_Name waits for both to settle. A statusCode guard would NOT work here: if() in
+  WDL evaluates both branches eagerly, so the bad selector would still be evaluated.
+  #>
+  Message_Identifier_Fallback = @{
+    type = 'Compose'
+    runAfter = @{ Message_Identifier = @('Failed', 'Skipped', 'TimedOut') }
+    inputs = "@$idTail"
+  }
+  <#
+  One name, resolved once, for everything downstream.
+
+  The .eml and its attachment folder MUST carry the same identifier - that is what lets a
+  person find an attachment from the message. Coalescing separately in each place would be
+  two copies of a rule that must agree, which is the shape that rots. Both consumers read
+  this action instead, so they cannot diverge.
+
+  Exactly one of the two inputs has a value: if Message_Identifier succeeded, the fallback
+  was skipped and its outputs are null, and vice versa. Both must have settled first, in
+  any combination, hence the wide runAfter.
+  #>
+  Message_Identifier_Final = @{
+    type = 'Compose'
+    runAfter = @{
+      Message_Identifier          = @('Succeeded', 'Failed', 'Skipped', 'TimedOut')
+      Message_Identifier_Fallback = @('Succeeded', 'Skipped')
+    }
+    inputs = "@coalesce(outputs('Message_Identifier'), outputs('Message_Identifier_Fallback'))"
+  }
   Email_Blob_Name = @{
     type = 'Compose'
-    runAfter = @{ Email_Subject_Clean = @('Succeeded'); Message_Identifier = @('Succeeded') }
-    inputs = "@concat($emlStem, ' [', outputs('Message_Identifier'), '].eml')"
+    runAfter = @{ Email_Subject_Clean = @('Succeeded'); Message_Identifier_Final = @('Succeeded') }
+    inputs = "@concat($emlStem, ' [', outputs('Message_Identifier_Final'), '].eml')"
   }
   Create_blob_1 = @{
     type = 'ApiConnection'
@@ -445,17 +500,19 @@ $found.actions = @{
             .eml names, left open until now and recorded in the README.
 
             A subfolder rather than a name suffix, so a downloaded file keeps its real name:
-            "Invoice.pdf", not "Invoice [Q4TAMd2rHPEk].pdf". The segment is the same
-            Message_Identifier the .eml uses - the k-token, or its $idTail fallback when the
-            token call didn't produce one - so an attachment sits beside its own message and
-            re-running the sweep overwrites its own blob rather than duplicating.
+            "Invoice.pdf", not "Invoice [Q4TAMd2rHPEk].pdf". The segment is read from
+            Message_Identifier_Final, the same action Email_Blob_Name reads - the k-token,
+            or its $idTail fallback when the token call didn't produce one - so an attachment
+            sits beside its own message and re-running the sweep overwrites its own blob
+            rather than duplicating. Reading the same action, rather than repeating the
+            coalesce, is what keeps the folder and the .eml from ever disagreeing.
 
             Nothing reads these by path: EmlPreviewFunc and EmlAttachmentNamesSkill both
             parse attachments out of the .eml, the index gets attachment_names from that
             skill, and refile-unsorted.ps1 excludes anything below the prefix either way.
             Attachments already written stay flat; only new writes are nested.
             #>
-            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier')}/"
+            folderPath = "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier_Final')}/"
             name       = "@$attStem"
             queryParametersSingleEncoded = $true
           }
