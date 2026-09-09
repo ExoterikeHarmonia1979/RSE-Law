@@ -407,6 +407,55 @@ def _fixture(tmp, name, manifest_rows, listing_rows):
     return mp, lp
 
 
+def _selftest_survivors():
+    """Prove the post-batch survivor check is concurrent, complete, and not trigger-happy.
+
+    The check is the last thing standing between a bad batch and silent data loss, so it
+    must examine every survivor and report only the ones actually confirmed gone. It is
+    also the run's bottleneck - 1,252 survivors per 2,000-blob batch, one round-trip each -
+    so seriality is a defect in its own right, and a test that cannot see the difference
+    between serial and concurrent would let it come back.
+    """
+    failures = []
+
+    lock = threading.Lock()
+    state = {'inflight': 0, 'peak': 0, 'seen': []}
+
+    def is_missing(blob):
+        with lock:
+            state['inflight'] += 1
+            state['peak'] = max(state['peak'], state['inflight'])
+            state['seen'].append(blob)
+        time.sleep(0.05)                      # long enough that a serial loop cannot overlap
+        with lock:
+            state['inflight'] -= 1
+        return blob.endswith('/vanished.eml')
+
+    survivors = [f'100.001/Emails/keep-{i}.eml' for i in range(24)]
+    survivors.append('100.002/Emails/vanished.eml')
+    missing = find_missing_survivors(survivors, is_missing, parallel=8)
+
+    if state['peak'] > 1:
+        print(f'  ok   survivor check runs concurrently (peak {state["peak"]} in flight)')
+    else:
+        print('  FAIL survivor check ran serially - peak 1 request in flight')
+        failures.append('survivors-concurrent')
+
+    if sorted(state['seen']) == sorted(survivors):
+        print(f'  ok   survivor check examined all {len(survivors)} survivors')
+    else:
+        print(f'  FAIL survivor check examined {len(state["seen"])} of {len(survivors)}')
+        failures.append('survivors-complete')
+
+    if sorted(missing) == ['100.002/Emails/vanished.eml']:
+        print('  ok   survivor check reported only the confirmed-missing survivor')
+    else:
+        print(f'  FAIL survivor check reported {missing!r}')
+        failures.append('survivors-precise')
+
+    return failures
+
+
 def cmd_selftest(args):
     """Prove each validation check can fail, by feeding it a case that must trip it.
 
@@ -537,11 +586,13 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    failures.extend(_selftest_survivors())
+
     print()
     if failures:
         print(f'{len(failures)} check(s) did not behave as specified: {", ".join(failures)}')
         return 1
-    print(f'all {len(cases) + 1} negative controls behaved as specified - '
+    print(f'all {len(cases) + 4} negative controls behaved as specified - '
           f'every validation check has been observed both passing and failing.')
     return 0
 
@@ -810,6 +861,40 @@ def delete_blob(storage, blob):
         return 0, type(e).__name__
 
 
+def survivor_is_missing(storage, blob):
+    """True only when the blob is CONFIRMED absent.
+
+    A 404 is evidence. A timeout, a reset, a 5xx are not: they say the question could not
+    be asked, and answering "missing" would halt a run that is behaving correctly. The
+    cost of swallowing one is bounded - the same survivor is re-checked after every later
+    batch that touches its group.
+    """
+    req = urllib.request.Request(blob_url(blob), method='HEAD')
+    req.add_header('Authorization', f'Bearer {storage.token()}')
+    req.add_header('x-ms-version', API_VERSION)
+    try:
+        with urllib.request.urlopen(req, timeout=60):
+            return False
+    except urllib.error.HTTPError as e:
+        return e.code == 404
+    except Exception:                                              # noqa: BLE001
+        return False
+
+
+def find_missing_survivors(survivors, is_missing, parallel):
+    """Survivors that `is_missing` confirms are gone.
+
+    Concurrent because this is the run's bottleneck, not a nicety. A 2,000-blob batch has
+    ~1,252 distinct survivors and each is one round-trip, so serially the delete threads
+    sit idle for minutes after every ~90 seconds of work - and because the checkpoint file
+    only grows while deletes are happening, that pause is indistinguishable from a hang to
+    anyone watching from outside the terminal.
+    """
+    survivors = list(survivors)
+    with concurrent.futures.ThreadPoolExecutor(parallel) as pool:
+        return [s for s, gone in zip(survivors, pool.map(is_missing, survivors)) if gone]
+
+
 def cmd_delete(args):
     plan = load_planner()
     storage = plan.Storage()
@@ -899,19 +984,8 @@ def cmd_delete(args):
             # there. A survivor that vanished during the batch means stop, not continue.
             if keep_of:
                 survivors = {keep_of[b] for b in batch if keep_of.get(b)}
-                missing = []
-                for s in survivors:
-                    req = urllib.request.Request(blob_url(s), method='HEAD')
-                    req.add_header('Authorization', f'Bearer {storage.token()}')
-                    req.add_header('x-ms-version', API_VERSION)
-                    try:
-                        with urllib.request.urlopen(req, timeout=60):
-                            pass
-                    except urllib.error.HTTPError as e:
-                        if e.code == 404:
-                            missing.append(s)
-                    except Exception:                              # noqa: BLE001
-                        pass
+                missing = find_missing_survivors(
+                    survivors, lambda s: survivor_is_missing(storage, s), args.parallel)
                 if missing:
                     ck.flush()
                     say(f'STOP: {len(missing)} survivor(s) missing after this batch')
