@@ -1,5 +1,5 @@
 {
-  "capturedUtc": "2026-09-09T02:35:13.5348312Z",
+  "capturedUtc": "2026-09-09T15:35:35.9913936Z",
   "workflow": "HTTP-Matter-On-Email-Receipt",
   "definition": {
     "metadata": {
@@ -570,12 +570,12 @@
                           "Email_Subject_Clean": [
                             "Succeeded"
                           ],
-                          "Message_Identifier": [
+                          "Message_Identifier_Final": [
                             "Succeeded"
                           ]
                         },
                         "type": "Compose",
-                        "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', outputs('Message_Identifier'), '].eml')"
+                        "inputs": "@concat(trim(if(greater(length(outputs('Email_Subject_Clean')), 150), substring(outputs('Email_Subject_Clean'), 0, 150), outputs('Email_Subject_Clean'))), ' [', outputs('Message_Identifier_Final'), '].eml')"
                       },
                       "Email_Subject_Clean": {
                         "runAfter": {},
@@ -607,7 +607,7 @@
                               "method": "post",
                               "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('samatters'))}/files",
                               "queries": {
-                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier')}/",
+                                "folderPath": "/matters/@{variables('strFoundMatter')}/Emails/Attachments/@{outputs('Message_Identifier_Final')}/",
                                 "name": "@trim(if(greater(length(outputs('Attachment_Name_Clean')), 180), substring(outputs('Attachment_Name_Clean'), 0, 180), outputs('Attachment_Name_Clean')))",
                                 "queryParametersSingleEncoded": true
                               }
@@ -643,7 +643,9 @@
                           },
                           "method": "POST",
                           "retryPolicy": {
-                            "type": "none"
+                            "count": 1,
+                            "interval": "PT5S",
+                            "type": "fixed"
                           },
                           "uri": "@parameters('dedupTokenFuncUrl')"
                         }
@@ -680,6 +682,33 @@
                         },
                         "type": "Compose",
                         "inputs": "@coalesce(body('Get_Dedup_Token')?['token'], replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', ''))"
+                      },
+                      "Message_Identifier_Fallback": {
+                        "runAfter": {
+                          "Message_Identifier": [
+                            "Failed",
+                            "Skipped",
+                            "TimedOut"
+                          ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@replace(replace(replace(if(greater(length(coalesce(outputs('Get_Message_ID'),'')), 24), substring(coalesce(outputs('Get_Message_ID'),''), sub(length(coalesce(outputs('Get_Message_ID'),'')), 24), 24), coalesce(outputs('Get_Message_ID'),'')), '/', '_'), '+', '-'), '=', '')"
+                      },
+                      "Message_Identifier_Final": {
+                        "runAfter": {
+                          "Message_Identifier": [
+                            "Succeeded",
+                            "Failed",
+                            "Skipped",
+                            "TimedOut"
+                          ],
+                          "Message_Identifier_Fallback": [
+                            "Succeeded",
+                            "Skipped"
+                          ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@coalesce(outputs('Message_Identifier'), outputs('Message_Identifier_Fallback'))"
                       }
                     },
                     "runAfter": {
