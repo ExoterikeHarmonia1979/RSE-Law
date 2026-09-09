@@ -585,20 +585,32 @@ def cmd_probe(args):
     started = time.time()
     bad_rows = []
 
+    # Retryable: auth (a token can expire mid-run) AND throttling. Storage answers sustained
+    # parallel reads with 503 Server Busy / 429, and treating those as "unreadable" turns a
+    # load symptom into a permanent-looking verdict about client mail. Observed: 16,000
+    # survivors read cleanly at 28/s, then 563 "failed" in one band while the rate halved to
+    # 11/s - the blobs were fine, the account was pushing back. 500/502/504 are transient for
+    # the same reason. A 404 is NOT here: that one is a real answer.
+    RETRYABLE = (401, 403, 429, 500, 502, 503, 504)
+    ATTEMPTS = 5
+
     def probe(item):
         token, blob = item
-        for attempt in range(3):
+        raw = None
+        for attempt in range(ATTEMPTS):
             try:
                 raw, _ = storage.head_bytes(blob, 65536)
                 break
             except urllib.error.HTTPError as e:
-                if e.code in (401, 403) and attempt < 2:
-                    time.sleep(2)
+                if e.code in RETRYABLE and attempt < ATTEMPTS - 1:
+                    # Back off rather than hammering: 1, 2, 4, 8s. A fixed 2s sleep across 24
+                    # threads reconverges on the same instant and re-triggers the throttle.
+                    time.sleep(2 ** attempt)
                     continue
                 return token, blob, f'http {e.code}'
             except Exception as e:                                 # noqa: BLE001
-                if attempt < 2:
-                    time.sleep(2)
+                if attempt < ATTEMPTS - 1:
+                    time.sleep(2 ** attempt)
                     continue
                 return token, blob, type(e).__name__
         if not raw:
