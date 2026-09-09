@@ -159,24 +159,77 @@ function Get-AllBlobNames {
     So: transient failures are absorbed, a persistent one still throws with its real error
     and the wrapper still logs "=== FAILED ===". The marker is not advanced until a page
     succeeds, so a retry re-requests the same page and no blob is skipped.
+
+    THE RETRIED UNIT IS A PAGE, NOT A REQUEST
+    -----------------------------------------
+    The first version of this retry wrapped only Invoke-WebRequest, and three things could
+    still walk out through the gap it left. archive-identity.selftest.ps1 pins all three.
+
+      the re-mint    The token was re-minted inside the catch. An exception raised inside a
+                     catch is not caught by its own try, so a failing re-mint left the loop,
+                     left this function and killed the run - and the re-mint is itself a
+                     network call (az, then AAD) on the same path that caused the retry. The
+                     recovery shared the failure it was recovering from: one blip put us in
+                     the catch, a second one an instant later finished the job, and the log
+                     showed an az error that never mentioned the listing. It is best-effort
+                     now. Failing to refresh a token that is probably still valid is not a
+                     reason to discard the walk; if the token really was the problem the next
+                     attempt fails again and the loop still throws the page's own error.
+
+      the parse      Turning the body into names sat outside the retry, so a 200 carrying a
+                     truncated or intercepted body was fatal on first sight. Fetch and parse
+                     are one unit now - a page counts as obtained only once it has parsed.
+
+      no page        Worst of the three, and silent. When the loop neither succeeded nor threw
+                     it left $resp null, and the cast then produced an EMPTY document, because
+                     [xml]'' does not throw - it returns a document with no root. Zero blobs,
+                     an empty NextMarker, the do/while ends, and the function returns a SHORT
+                     listing that looks like a complete one. Nothing downstream can tell the
+                     difference: the reconciler diffs live mail against it and reports archived
+                     mail as missing. A page must therefore look like a listing before it
+                     counts - hence the EnumerationResults check, which also catches a 200 with
+                     an empty body - and if the loop ever ends with nothing in hand it throws.
     #>
-    $resp = $null
+    $xml = $null
     for ($attempt = 1; $attempt -le 5; $attempt++) {
-      try { $resp = Invoke-WebRequest -Uri $u -Headers $hdr -UseBasicParsing -TimeoutSec 120; break }
+      try {
+        $resp = Invoke-WebRequest -Uri $u -Headers $hdr -UseBasicParsing -TimeoutSec 120
+        if (-not $resp) { throw 'the listing request returned no response' }
+        # In PowerShell 7 .Content is already a string, but it still carries the UTF-8 BOM,
+        # which a bare [xml] cast will not parse. Written as an escape rather than a literal
+        # BOM so that re-encoding this file cannot quietly break the strip.
+        $parsed = [xml]($resp.Content -replace '^\uFEFF', '')
+        # An empty or non-listing body parses without complaint but carries no root, and an
+        # unrecognised page must never be read as "the listing ended here".
+        if (-not $parsed.EnumerationResults) { throw 'the listing page had no EnumerationResults element' }
+        $xml = $parsed
+        break
+      }
       catch {
-        if ($attempt -eq 5) { throw }
+        # Held because the re-mint below has a catch of its own, and because this is the error
+        # worth reporting: an operator needs the page failure, not a token-refresh symptom.
+        $pageError = $_
+        if ($attempt -eq 5) { throw $pageError }
         $wait = [Math]::Pow(2, $attempt)   # 2s, 4s, 8s, 16s
         Write-Warning ("listing page {0} failed (attempt {1}/5), retrying in {2}s: {3}" -f
-                       ($pages + 1), $attempt, $wait, $_.Exception.Message)
+                       ($pages + 1), $attempt, $wait, $pageError.Exception.Message)
         Start-Sleep -Seconds $wait
-        # A long listing can outlive its token; a 403 here looks like any other failure.
-        $hdr['Authorization'] = "Bearer $(NewStorageToken)"
-        $tokenAge.Restart()
+        # A long listing can outlive its token; a 403 here looks like any other failure. Best
+        # effort only - see "the re-mint" above.
+        try {
+          $hdr['Authorization'] = "Bearer $(NewStorageToken)"
+          $tokenAge.Restart()
+        }
+        catch {
+          Write-Warning ("could not re-mint the storage token between listing attempts, " +
+                         "continuing on the current one: {0}" -f $_.Exception.Message)
+        }
       }
     }
-    # In PowerShell 7 .Content is already a string, but it still carries the UTF-8 BOM,
-    # which a bare [xml] cast will not parse.
-    $xml = [xml]($resp.Content -replace "^﻿", '')
+    # Unreachable while the loop above throws on its last attempt, and kept anyway: this is
+    # the line that decides a short listing can never be mistaken for a complete one, and it
+    # is cheaper than the run that finds out otherwise.
+    if (-not $xml) { throw "listing page $($pages + 1) produced no page after 5 attempts" }
     foreach ($b in $xml.EnumerationResults.Blobs.Blob) { $names.Add($b.Name) }
     $marker = $xml.EnumerationResults.NextMarker
     $pages++
