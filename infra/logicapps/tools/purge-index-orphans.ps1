@@ -76,7 +76,33 @@ force them through, which is exactly the check that makes deleting safe at all.
 #>
 function Get-MessageStem([string]$Blob) {
   if ($Blob -match '^(?<m>[^/]+)/Emails/(?<s>.+?)(?: \[[^\]]+\])?\.(?:eml|msg)$') {
-    return ($Matches.m + '|' + $Matches.s).ToLowerInvariant()
+    <#
+    The subject is normalised because the two write paths sanitise it differently, so one
+    message is stored under names that are not equal as strings: "RE: Claim No. 23-7025944"
+    beside "RE_ Claim No. 23-7025944", "2033962/FW: Summons" beside "2033962 _ FW_ Summons",
+    and runs of spaces preserved by one path and collapsed by the other. Comparing raw, 8,505
+    of the deleted blobs in the current cleanup do not match their own group's survivor.
+    Normalising cuts that to 2,618.
+
+    Only characters that are illegal or awkward in a path are folded, plus whitespace and the
+    underscore they get replaced by. That is undoing sanitisation, not discarding meaning:
+    "Invoice 49728" and "Invoice 49729" stay different, and there is a control for it.
+
+    The cost is measured and small. Distinct keys fall 18,581 -> 18,047, and keys shared by
+    more than one group rise 5,939 -> 6,021. That second number is the one that matters,
+    because a shared key lets one message stand in as the survivor of another - but note it
+    is 5,939 BEFORE this change, covering 25,579 of 38,221 groups. Matter-plus-subject was
+    always a weak identity; this makes it 616 groups weaker while fixing 5,887 misclassified
+    blobs.
+
+    The real fix is to key on the message identity rather than the subject, and it is not
+    available here: the k-token is minted from the message bytes, and an orphan is by
+    definition a blob that no longer exists to be read. Nor can it be taken from the
+    surviving name - 0 of the 38,221 survivors in this cleanup carry a k-token, because the
+    keep-rule prefers the legacy copy and legacy names carry a mailbox-id tail instead.
+    #>
+    $s = ($Matches.s -replace '[:/\\*?"<>|]', '_') -replace '[\s_]+', ' '
+    return ($Matches.m + '|' + $s.Trim()).ToLowerInvariant()
   }
   return $null
 }
@@ -99,6 +125,21 @@ if ($SelfTest) {
     ((Get-MessageStem '120.033/Emails/FW_ INVOICE [k000e8ee8b76730fb638222].msg') -eq
      (Get-MessageStem '120.033/Emails/FW_ INVOICE [TKHIWU4VNG_RAALFKSWRAAA].eml')) $true
   Check 'no bracket suffix'     (Get-MessageStem '98.060/Emails/demand for expert exchange.eml') '98.060|demand for expert exchange'
+  # The two write paths sanitise subjects differently, so the SAME message is stored under
+  # names that differ only in punctuation and spacing. Each pair below is one real message.
+  Check 'colon and underscore agree' `
+    ((Get-MessageStem '100.202/Emails/RE: Claim No. 23-7025944; Maldonado.eml') -eq
+     (Get-MessageStem '100.202/Emails/RE_ Claim No. 23-7025944; Maldonado [TKHIWU4VNG_RAAL9PP9KAAA].eml')) $true
+  Check 'slash and underscore agree' `
+    ((Get-MessageStem '140.043/Emails/Re: CIG claim 2033962/FW: Summons for C&S.eml') -eq
+     (Get-MessageStem '140.043/Emails/Re_ CIG claim 2033962 _ FW_ Summons for C&S [TKHIWU4VNG_RAAMUG].eml')) $true
+  Check 'repeated whitespace collapses' `
+    ((Get-MessageStem '100.222/Emails/Re_ Morales v Blue Hill RSE                  File #100.222 [k00668b0aa67eb0beadd].eml') -eq
+     (Get-MessageStem '100.222/Emails/Re_ Morales v Blue Hill RSE File #100.222 [TKHIWU4VNG_RAAM].eml')) $true
+  # Normalising must not merge two genuinely different subjects in one matter.
+  Check 'different subjects stay apart' `
+    ((Get-MessageStem '117.001/Emails/RE_ Invoice 49728.eml') -eq
+     (Get-MessageStem '117.001/Emails/RE_ Invoice 49729.eml')) $false
   # Attachments live under a different path and are not messages; matching one would let an
   # attachment stand in as the surviving copy of a message that is actually gone.
   Check 'attachment is not a message' (Get-MessageStem '100.079/Emails/Attachments/k073/2026-07-30 MO.pdf') $null
