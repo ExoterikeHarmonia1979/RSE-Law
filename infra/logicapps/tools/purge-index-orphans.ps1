@@ -18,9 +18,23 @@ HOW THE ORPHANS GOT THERE
 De-duplication deleted ~29k superseded blobs (the old subject-only names, before message-id
 tails made them unique) and the Teams retirement deleted more. The data source does carry
 NativeBlobSoftDeleteDeletionDetectionPolicy, so in principle the indexer removes documents
-for deleted blobs - but ONLY while the blob is still in the soft-deleted state. Storage soft
-delete here is 7 days. Once that window closes the blob is purged and the indexer can never
-learn it existed, so the document is stranded permanently.
+for deleted blobs - but ONLY while the blob is still in the soft-deleted state. Once that
+window closes the blob is purged and the indexer can never learn it existed, so the document
+is stranded permanently.
+
+Blob soft delete is 30 days, raised from 7 on 2026-09-08 for the duplicate cleanup (container
+soft delete is a separate 7 and does not apply). Against an indexer that runs hourly that is
+an enormous margin, so the stranding above is now the exception rather than the rule: measured
+2026-09-09, 748 of 749 confirmed soft-deleted blobs had left the index within one indexer run,
+while 250 of 250 deleted after that run were still present - the same lookup over both, which
+is what makes the first number mean something. This script is therefore no longer needed for
+the bulk of a cleanup.
+
+What it IS still needed for: blobs whose name contains a '/' (a slash inside the subject, so
+the path is <matter>/Emails/<part1>/<part2>.eml). Those shed unreliably - 17 of 75 were still
+indexed after two consecutive indexer runs, against 0 of 100 for ordinary names, all confirmed
+404 in storage. About 377 of the 58,779 blobs in the current cleanup have that shape, so on
+the order of 85 stranded documents. The mechanism is not understood.
 
 Confirmed on a real document: subject "117.093- status of discovery" is in the index three
 times - the old subject-only blob (deleted, 404 on download) and the new tail-named blobs
@@ -40,9 +54,60 @@ param(
   [int]$BatchSize = 1000,
   [switch]$RefreshBlobs,
   [switch]$Execute,
-  [switch]$PurgeUnbacked   # also remove orphans with no surviving copy (see below)
+  [switch]$PurgeUnbacked,  # also remove orphans with no surviving copy (see below)
+  # Offline negative controls. Before every credential and network call, so it runs anywhere.
+  [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
+
+<#
+The identity of a MESSAGE, as opposed to the identity of a blob: matter plus cleaned subject,
+with the trailing "[id]" dropped so every copy of one message collapses to one key. Used both
+to build the set of surviving messages and to ask whether an orphan's message survives.
+
+Both extensions count, and that is the whole point. The archive holds the same message as a
+`.eml` written by the live pipeline and as a `.msg` produced by the ingest, and the de-duplication
+treats those as one message - every group has exactly one survivor by construction. Matching only
+`.eml` therefore does not merely miss a few: it declares every `.msg` orphan "unbacked", the
+class this script refuses to delete. Replayed against the current cleanup that is 18,217 of
+58,779 blobs (37% including the .eml misses) reported as having no surviving copy when they all
+have one. The temptation that creates is the dangerous part - reaching for -PurgeUnbacked to
+force them through, which is exactly the check that makes deleting safe at all.
+#>
+function Get-MessageStem([string]$Blob) {
+  if ($Blob -match '^(?<m>[^/]+)/Emails/(?<s>.+?)(?: \[[^\]]+\])?\.(?:eml|msg)$') {
+    return ($Matches.m + '|' + $Matches.s).ToLowerInvariant()
+  }
+  return $null
+}
+
+if ($SelfTest) {
+  $fail = @()
+  function Check($name, $got, $want) {
+    if ($got -eq $want) { Write-Host "  ok   $name" }
+    else { Write-Host "  FAIL $name (got '$got', wanted '$want')"; $script:fail += $name }
+  }
+  Write-Host 'message stem:'
+  Check 'legacy .eml with tail' (Get-MessageStem '100.079/Emails/CMC re POS [QYbmEur862QBAAQvGD4UAAA].eml') '100.079|cmc re pos'
+  Check 'k-token .eml'          (Get-MessageStem '100.079/Emails/CMC re POS [k073646675726cdd6541af1].eml') '100.079|cmc re pos'
+  # The ingest writes .msg. Before this was fixed these returned nothing, so every .msg orphan
+  # was classified as having no surviving copy.
+  Check 'k-token .msg'          (Get-MessageStem '100.079/Emails/CMC re POS [k073646675726cdd6541af1].msg') '100.079|cmc re pos'
+  Check 'legacy .msg with tail' (Get-MessageStem '100.079/Emails/CMC re POS [QYbmEur862QBAAQvGD4UAAA].msg') '100.079|cmc re pos'
+  # A .msg and a .eml of one message must collapse to the SAME key, or the survivor is not found.
+  Check 'msg and eml agree' `
+    ((Get-MessageStem '120.033/Emails/FW_ INVOICE [k000e8ee8b76730fb638222].msg') -eq
+     (Get-MessageStem '120.033/Emails/FW_ INVOICE [TKHIWU4VNG_RAALFKSWRAAA].eml')) $true
+  Check 'no bracket suffix'     (Get-MessageStem '98.060/Emails/demand for expert exchange.eml') '98.060|demand for expert exchange'
+  # Attachments live under a different path and are not messages; matching one would let an
+  # attachment stand in as the surviving copy of a message that is actually gone.
+  Check 'attachment is not a message' (Get-MessageStem '100.079/Emails/Attachments/k073/2026-07-30 MO.pdf') $null
+  Check 'other extension ignored'     (Get-MessageStem '100.079/Emails/CMC re POS [k073].pdf')              $null
+  Write-Host ''
+  if ($fail.Count) { Write-Host "$($fail.Count) control(s) misbehaved: $($fail -join ', ')"; exit 1 }
+  Write-Host 'all message-stem controls behaved as specified.'
+  exit 0
+}
 $sp  = $PSScriptRoot
 $az  = "$env:LOCALAPPDATA\AzureCLI\bin\az.cmd"
 $svc = 'rse-matterssearch'
@@ -186,10 +251,8 @@ if ($undecodable) { Write-Host "  ($undecodable keys were not decodable to a mat
 # is reported and skipped unless -PurgeUnbacked is given.
 $stems = @{}
 foreach ($b in $blobNames) {
-  if ($b -match '^(?<m>[^/]+)/Emails/(?<s>.+?)(?: \[[^\]]+\])?\.eml$') {
-    $k = ($Matches.m + '|' + $Matches.s).ToLowerInvariant()
-    $stems[$k] = $true
-  }
+  $k = Get-MessageStem $b
+  if ($k) { $stems[$k] = $true }
 }
 <#
 Before any of that, confirm the blob is really absent.
@@ -249,9 +312,8 @@ $orphans = @($missing | ForEach-Object { [pscustomobject]@{ Key = $_.Key; Blob =
 $redundant = @(); $unbacked = @()
 foreach ($o in $orphans) {
   $survives = $false
-  if ($o.Blob -match '^(?<m>[^/]+)/Emails/(?<s>.+?)(?: \[[^\]]+\])?\.eml$') {
-    $survives = $stems.ContainsKey(($Matches.m + '|' + $Matches.s).ToLowerInvariant())
-  }
+  $k = Get-MessageStem $o.Blob
+  if ($k) { $survives = $stems.ContainsKey($k) }
   if ($survives) { $redundant += $o } else { $unbacked += $o }
 }
 
