@@ -31,10 +31,16 @@ is what makes the first number mean something. This script is therefore no longe
 the bulk of a cleanup.
 
 What it IS still needed for: blobs whose name contains a '/' (a slash inside the subject, so
-the path is <matter>/Emails/<part1>/<part2>.eml). Those shed unreliably - 17 of 75 were still
+the path is <matter>/Emails/<part1>/<part2>.eml). Those shed more slowly - 17 of 75 were still
 indexed after two consecutive indexer runs, against 0 of 100 for ordinary names, all confirmed
-404 in storage. About 377 of the 58,779 blobs in the current cleanup have that shape, so on
-the order of 85 stranded documents. The mechanism is not understood.
+404 in storage.
+
+That rate was measured minutes after deletion and does NOT extrapolate: it was mostly indexer
+lag, not stranding. Projecting it over the 377 extra-slash blobs in the cleanup gave "about 85
+stranded documents", which was wrong. Counted once the indexer had caught up, the real figure
+is 4 of 333 distinct - about 0.01% of the 58,779, and 3 orders of magnitude below what the
+early sample implied. Anyone sampling this again should wait at least two full indexer cycles
+after the last delete before believing a number.
 
 Confirmed on a real document: subject "117.093- status of discovery" is in the index three
 times - the old subject-only blob (deleted, 404 on download) and the new tail-named blobs
