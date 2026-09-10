@@ -5,6 +5,7 @@
     python dedup-execute.py probe     --validated dedup-validated.tsv [--parallel 24]
     python dedup-execute.py dryrun    --validated dedup-validated.tsv --out dedup-deletes.txt
     python dedup-execute.py delete    --deletes dedup-deletes.txt [--limit N] [--parallel 12]
+    python dedup-execute.py rename    [--validated dedup-validated.tsv] [--execute]
     python dedup-execute.py undelete  --blob <name>
     python dedup-execute.py softlist  --prefix <path prefix>
     python dedup-execute.py identities --listing current-blobs.tsv
@@ -407,6 +408,85 @@ def _fixture(tmp, name, manifest_rows, listing_rows):
     return mp, lp
 
 
+def _selftest_renames():
+    """Prove the survivor rename is one-to-one, and refuses rather than guesses when it is not.
+
+    A standalone rename of every legacy blob is NOT one-to-one: several mailboxes archive one
+    message under their own Graph tails, all of those mint the same token, and so all of them
+    want the same new name. Measured live, 212 of 3,726 targets (5.4%) were claimed by more
+    than one source, some by five.
+
+    Doing it here removes that by construction rather than by care: the keep-rule has already
+    reduced each group to one survivor, so one token yields one source, and two different
+    groups have different tokens. Measured over the 38,221 survivors of the current cleanup,
+    35,559 are renamable and they produce 35,559 distinct targets - zero collisions.
+
+    "By construction" is exactly the kind of claim that stops being true after an edit, so the
+    collision is still detected and still refuses, and the control below feeds it a case that
+    trips it.
+    """
+    failures = []
+
+    def target(blob, token):
+        """Stand-in for rename-legacy.py's target_name: swap the bracketed id for the token."""
+        if not blob.endswith('.eml') or ' [' not in blob:
+            return None
+        stem = blob[:blob.rindex(' [')]
+        new = f'{stem} [{token}].eml'
+        return None if new == blob else new
+
+    groups = {
+        'k01': {'keep': 'A/Emails/one [TAIL0000000000000001].eml',
+                'deletes': ['A/Emails/one [TAIL0000000000000002].eml'], 'matter': 'A'},
+        'k02': {'keep': 'A/Emails/two [TAIL0000000000000003].eml', 'deletes': [], 'matter': 'A'},
+    }
+    renames, skipped, collisions = plan_renames(groups, target)
+
+    if sorted(r[1] for r in renames) == ['A/Emails/one [TAIL0000000000000001].eml',
+                                         'A/Emails/two [TAIL0000000000000003].eml']:
+        print('  ok   rename plans exactly one source per group')
+    else:
+        print(f'  FAIL rename planned {[r[1] for r in renames]!r}')
+        failures.append('rename-one-per-group')
+
+    # The blob being deleted must never be renamed: it is about to stop existing, and a rename
+    # would take the survivor's name with it.
+    if all('0000000002' not in r[1] for r in renames):
+        print('  ok   a blob marked DELETE is never renamed')
+    else:
+        print('  FAIL a DELETE blob was planned for rename')
+        failures.append('rename-skips-deletes')
+
+    if all(r[2] == f'{r[1][:r[1].rindex(" [")]} [{r[0]}].eml' for r in renames):
+        print('  ok   the target carries the group token the pipeline would write')
+    else:
+        print('  FAIL target did not carry the group token')
+        failures.append('rename-target-token')
+
+    # No derivable name is the safe answer - the blob keeps the one it has. It must be counted
+    # as skipped, never dropped silently and never treated as a failure.
+    g2 = {'k03': {'keep': 'A/Emails/no-bracket.eml', 'deletes': [], 'matter': 'A'}}
+    r2, s2, _ = plan_renames(g2, target)
+    if not r2 and [x[1] for x in s2] == ['A/Emails/no-bracket.eml']:
+        print('  ok   a survivor with no derivable name is skipped, not failed')
+    else:
+        print(f'  FAIL undrivable name gave renames={r2!r} skipped={s2!r}')
+        failures.append('rename-skips-underivable')
+
+    # Two groups whose survivors want one name. Impossible while the keep-rule holds, which is
+    # why it has to be detected rather than assumed away.
+    g3 = {'kAA': {'keep': 'A/Emails/same [TAIL0000000000000001].eml', 'deletes': [], 'matter': 'A'},
+          'kAA2': {'keep': 'A/Emails/same [TAIL0000000000000002].eml', 'deletes': [], 'matter': 'A'}}
+    _, _, c3 = plan_renames(g3, lambda b, t: 'A/Emails/same [kCOLLIDE].eml')
+    if len(c3) == 1 and len(next(iter(c3.values()))) == 2:
+        print('  ok   two survivors wanting one name is reported as a collision')
+    else:
+        print(f'  FAIL collision not detected: {c3!r}')
+        failures.append('rename-collision-detected')
+
+    return failures
+
+
 def _selftest_survivors():
     """Prove the post-batch survivor check is concurrent, complete, and not trigger-happy.
 
@@ -586,13 +666,14 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    failures.extend(_selftest_renames())
     failures.extend(_selftest_survivors())
 
     print()
     if failures:
         print(f'{len(failures)} check(s) did not behave as specified: {", ".join(failures)}')
         return 1
-    print(f'all {len(cases) + 4} negative controls behaved as specified - '
+    print(f'all {len(cases) + 9} negative controls behaved as specified - '
           f'every validation check has been observed both passing and failing.')
     return 0
 
@@ -611,6 +692,191 @@ def read_validated(path):
             else:
                 g['deletes'].append(p[4])
     return groups
+
+
+# ── renaming the survivor ────────────────────────────────────────────────────────────────
+
+def plan_renames(groups, target_of):
+    """Survivor renames for `groups`: (renames, skipped, collisions).
+
+    renames    [(token, src, dst)]  - one entry per group whose survivor has a target
+    skipped    [(token, src)]       - survivor kept its name; target_of declined to derive one
+    collisions {dst: [src, ...]}    - a target wanted by more than one survivor
+
+    Only the KEEP is ever considered. A blob on the delete list is about to stop existing;
+    renaming it would move the name out from under the copy that is being kept.
+    """
+    renames, skipped, claims = [], [], {}
+    for token, g in groups.items():
+        src = g.get('keep')
+        if not src:
+            continue
+        dst = target_of(src, token)
+        if not dst:
+            skipped.append((token, src))
+            continue
+        renames.append((token, src, dst))
+        claims.setdefault(dst, []).append(src)
+    collisions = {d: s for d, s in claims.items() if len(s) > 1}
+    return renames, skipped, collisions
+
+
+def load_renamer():
+    """Reuse rename-legacy.py's target_name and rename_blob rather than writing them twice.
+
+    That file owns the naming rule, and it has the controls proving each refusal: an
+    attachment, an already-k-named blob, a subject that merely ends in brackets, a stem
+    written under the old 180-character cap. Re-deriving any of that here would give two
+    answers to one question.
+    """
+    path = os.path.join(HERE, 'rename-legacy.py')
+    if not os.path.exists(path):
+        sys.exit('rename-legacy.py is not beside this script; it owns the naming rule.')
+    spec = importlib.util.spec_from_file_location('rename_legacy', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for fn in ('target_name', 'rename_blob'):
+        if not hasattr(mod, fn):
+            sys.exit(f'rename-legacy.py has no {fn}(); it changed and this needs updating.')
+    return mod
+
+
+def cmd_rename(args):
+    """Give each surviving blob the name the live pipeline would write for that message.
+
+    WHY THIS IS HERE AND NOT IN rename-legacy.py
+    --------------------------------------------
+    Renaming every legacy blob is not a one-to-one operation. Several mailboxes archive one
+    message under their own Graph tails; all of those mint the same token, so all of them
+    want the same new name - 212 of 3,726 targets in a live 4,000-blob sample, some wanted
+    by five sources. A tool working from the container listing alone cannot choose between
+    them, and choosing is exactly what the de-duplication keep-rule already does.
+
+    Working from dedup-validated.tsv removes the problem rather than managing it: the group
+    has one survivor, so one token yields one source, and two groups have different tokens.
+    Over the 38,221 survivors of the current cleanup that gives 35,559 renamable blobs and
+    35,559 distinct targets - no collisions. It is still checked, because "by construction"
+    stops being true the moment someone edits the keep-rule.
+
+    The token also comes free. It is already in the manifest, so nothing has to be re-read
+    from storage to mint it - which is what made the standalone tool expensive as well as
+    ambiguous.
+
+    WHAT IT FIXES
+    -------------
+    A pre-switch message sits under a mailbox-id tail the pipeline cannot recognise, so
+    re-archiving it writes a second blob under the k-token name. After the rename the
+    pipeline's write lands on the name that already exists and overwrites it. The bytes are
+    untouched: this is an ADLS Gen2 metadata rename, and the copy kept is still the one the
+    keep-rule chose, so the archive owner's reason for preferring it is unaffected.
+    """
+    ren = load_renamer()
+    plan = load_planner()
+    storage = plan.Storage()
+
+    groups = read_validated(args.validated or VALIDATED)
+    renames, skipped, collisions = plan_renames(groups, ren.target_name)
+    say(f'{len(groups):,} groups, {len(renames):,} survivors renamable, '
+        f'{len(skipped):,} keeping the name they have')
+
+    if collisions:
+        say(f'STOP: {len(collisions)} target name(s) wanted by more than one survivor')
+        for d, s in list(collisions.items())[:5]:
+            say(f'  {d}')
+            for x in s:
+                say(f'     <- {x}')
+        say('the keep-rule is supposed to make this impossible; do not force it')
+        return 1
+
+    done = set()
+    ckpt = args.checkpoint or os.path.join(HERE, 'dedup-renamed.log')
+    if os.path.exists(ckpt):
+        with open(ckpt, encoding='utf-8') as fh:
+            for line in fh:
+                p = line.rstrip('\n').split('\t')
+                # 201 renamed, 404 source already gone, 412/409 target exists - all terminal.
+                # Anything else is transient and gets another attempt on the next run.
+                if len(p) >= 2 and p[1] in ('201', '404', '412', '409'):
+                    done.add(p[0])
+        say(f'checkpoint has {len(done):,} already settled')
+
+    todo = [r for r in renames if r[1] not in done]
+    if args.limit:
+        todo = todo[:args.limit]
+    if not todo:
+        say('nothing left to do')
+        return 0
+
+    if not args.execute:
+        say(f'DRY RUN: {len(todo):,} would be renamed. Examples:')
+        for _, src, dst in todo[:5]:
+            say(f'  {src}')
+            say(f'    -> {dst}')
+        say('re-run with --execute to apply.')
+        return 0
+
+    lock = threading.Lock()
+    state = {'done': 0, 'ok': 0, 'gone': 0, 'exists': 0, 'fail': 0}
+    started = time.time()
+    ck = open(ckpt, 'a', encoding='utf-8')
+
+    def one(item):
+        _, src, dst = item
+        status, err = ren.rename_blob(storage, src, dst)
+        if status in (401, 403):                # token rolled mid-run; retry once
+            time.sleep(1)
+            status, err = ren.rename_blob(storage, src, dst)
+        with lock:
+            state['done'] += 1
+            if status == 201:
+                state['ok'] += 1
+            elif status == 404:
+                state['gone'] += 1
+            elif status in (409, 412):
+                state['exists'] += 1
+            else:
+                state['fail'] += 1
+            ck.write(f'{src}\t{status}\t{dst}\t{err or ""}\n')
+            if state['done'] % 250 == 0 or state['done'] == len(todo):
+                ck.flush()
+                el = max(time.time() - started, 1)
+                rate = state['done'] / el
+                say(f'  {state["done"]:,}/{len(todo):,}  renamed {state["ok"]:,}  '
+                    f'source-gone {state["gone"]:,}  target-exists {state["exists"]:,}  '
+                    f'failed {state["fail"]:,}  {rate:.0f}/s  '
+                    f'eta {(len(todo) - state["done"]) / max(rate, 0.01) / 60:.0f}m')
+        return src, status
+
+    try:
+        for i in range(0, len(todo), args.batch):
+            batch = todo[i:i + args.batch]
+            with concurrent.futures.ThreadPoolExecutor(args.parallel) as pool:
+                results = dict(pool.map(one, batch))
+            # A rename that reported success must leave the message readable under its new
+            # name. The rename is atomic, so this should never fire - which is the reason to
+            # check it: if it ever does, the assumption this whole pass rests on is wrong.
+            moved = [dst for _, src, dst in batch if results.get(src) == 201]
+            if moved:
+                missing = find_missing_survivors(
+                    moved, lambda b: survivor_is_missing(storage, b), args.parallel)
+                if missing:
+                    ck.flush()
+                    say(f'STOP: {len(missing)} blob(s) absent under their new name')
+                    for m in missing[:10]:
+                        say(f'  {m}')
+                    return 1
+                say(f'  batch {i // args.batch + 1}: {len(moved):,} verified at the new name')
+    finally:
+        ck.flush()
+        ck.close()
+
+    say(f'renamed {state["ok"]:,}, source gone {state["gone"]:,}, '
+        f'target already existed {state["exists"]:,}, failed {state["fail"]:,}')
+    if state['exists']:
+        say(f'  {state["exists"]:,} target(s) already existed - the pipeline had already '
+            f'written that name. Those legacy copies are now duplicates, and which copy to '
+            f'keep is a de-duplication decision, not a rename one. Left alone; see {ckpt}.')
+    return 1 if state['fail'] else 0
 
 
 # ── survivor readability ─────────────────────────────────────────────────────────────────
@@ -1193,6 +1459,15 @@ def main():
     de.add_argument('--batch', type=int, default=2000)
     de.add_argument('--no-crosscheck', action='store_true')
 
+    rn = sub.add_parser('rename',
+                        help='give each surviving blob the name the pipeline would write')
+    rn.add_argument('--validated')
+    rn.add_argument('--checkpoint')
+    rn.add_argument('--limit', type=int)
+    rn.add_argument('--parallel', type=int, default=8)
+    rn.add_argument('--batch', type=int, default=1000)
+    rn.add_argument('--execute', action='store_true')
+
     sl = sub.add_parser('softlist')
     sl.add_argument('--prefix', required=True)
 
@@ -1213,6 +1488,7 @@ def main():
         'list': cmd_list, 'validate': cmd_validate, 'probe': cmd_probe,
         'dryrun': cmd_dryrun, 'delete': cmd_delete, 'softlist': cmd_softlist,
         'undelete': cmd_undelete, 'head': cmd_head, 'identities': cmd_identities,
+        'rename': cmd_rename,
     }[args.cmd](args)
 
 
