@@ -28,8 +28,13 @@ dedup-resolved.tsv
 
 # Execution artefacts for the same cleanup. All list real blob paths, so the same rule
 # applies. dedup-deleted.log is a run's resume checkpoint and is meaningless outside it.
-current-blobs.tsv
-current-blobs.tsv.partial
+# Globbed, not exact: a dated or suffixed variant is the same data under a different name.
+# current-blobs-0910.tsv appeared during the 2026-09-09 cleanup and matched none of the exact
+# rules, so a `git add .` would have committed 150 MB of real blob paths - matter numbers and
+# client subject lines - to a public repository.
+current-blobs*.tsv
+current-blobs*.tsv.partial
+current-blobs*.txt
 dedup-validated.tsv
 dedup-skipped.tsv
 dedup-deletes.txt
