@@ -237,14 +237,25 @@ if ($stale) {
   & $az storage blob list --account-name samatters --container-name matters `
       --num-results "*" --auth-mode login --query "[].name" -o tsv 2>$null | Set-Content $dump
 }
-$blobNames = @(Get-Content $dump)
+<#
+Streamed into the set rather than read into an array first. Get-Content wraps every line in
+a PSObject carrying ReadCount/PSPath/etc, which on this container costs 1,815 MB for a 108 MB
+file - a 17x blow-up, measured - and that is spent before the index scan allocates anything.
+Against the 853k documents the scan then holds, it was enough to get the run killed three
+times by the system's low-memory guard, always in the same place.
+
+ReadLines streams and yields bare strings: 342 MB for the same 991,828 entries, and 4.9s
+instead of 27.7s. The set is the only copy kept; nothing needs the array afterwards.
+#>
+$blobs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($line in [System.IO.File]::ReadLines($dump)) {
+  if ($line) { [void]$blobs.Add($line) }
+}
 # A short listing means the listing failed, not that the archive is empty. Deleting index
 # documents on the strength of a truncated listing would wipe the index.
-if ($blobNames.Count -lt 100000) {
-  throw "container listing returned only $($blobNames.Count) blobs - refusing to decide anything from that"
+if ($blobs.Count -lt 100000) {
+  throw "container listing returned only $($blobs.Count) blobs - refusing to decide anything from that"
 }
-$blobs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-foreach ($b in $blobNames) { [void]$blobs.Add($b) }
 Write-Host "blobs in storage: $($blobs.Count)"
 
 # ── 2. what is in the index ───────────────────────────────────────────────────
@@ -369,7 +380,7 @@ if ($undecodable) { Write-Host "  ($undecodable keys were not decodable to a mat
 # deleting the row would erase the firm's only record that the message existed - so that case
 # is reported and skipped unless -PurgeUnbacked is given.
 $stems = @{}
-foreach ($b in $blobNames) {
+foreach ($b in $blobs) {
   $k = Get-MessageStem $b
   if ($k) { $stems[$k] = $true }
 }
