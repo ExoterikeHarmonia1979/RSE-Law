@@ -95,16 +95,50 @@ function Get-MessageStem([string]$Blob) {
     always a weak identity; this makes it 616 groups weaker while fixing 5,887 misclassified
     blobs.
 
-    The real fix is to key on the message identity rather than the subject, and it is not
-    available here: the k-token is minted from the message bytes, and an orphan is by
-    definition a blob that no longer exists to be read. Nor can it be taken from the
-    surviving name - 0 of the 38,221 survivors in this cleanup carry a k-token, because the
-    keep-rule prefers the legacy copy and legacy names carry a mailbox-id tail instead.
+    This is NOT the identity a deletion is decided on any more - see Get-MessageIdentity,
+    which uses the sender and sent-date the index holds. The stem is now only the fallback for
+    the 6% of message documents missing one of those fields. It is kept, rather than deleted,
+    because that fallback still has to work and still has to undo the sanitisation drift.
     #>
     $s = ($Matches.s -replace '[:/\\*?"<>|]', '_') -replace '[\s_]+', ' '
     return ($Matches.m + '|' + $s.Trim()).ToLowerInvariant()
   }
   return $null
+}
+
+<#
+The identity of a message, from fields the INDEX holds rather than from its blob name.
+
+Get-MessageStem is not strong enough to authorise a deletion on its own. Measured over 89,524
+message documents pulled from the live index: 12,399 of 50,725 distinct stems (24%) cover more
+than one genuinely different message, and 44,924 documents (50%) sit under such a stem. The
+worst is "unsortedmattercommunication|(no subject)", which covers 5,569 distinct messages -
+so one surviving "(no subject)" blob would licence deleting the index row of 5,568 others,
+each of which is the firm's only remaining record that the message existed. Subjects repeat
+because threads repeat them, and "(no subject)" repeats hardest.
+
+Sender and sent-date separate them, and crucially the index holds both FOR THE ORPHAN ITSELF -
+the blob is gone, but the document that describes it is exactly what we are deciding about.
+That is why this works where reading the blob does not.
+
+Returns $null when either field is missing, rather than a key that would collide with every
+other field-less document. The caller falls back to the stem in that case, which is the old
+behaviour: 94% of message documents carry both fields, so the weak path is the exception.
+#>
+function Get-MessageIdentity([string]$Subject, [string]$From, $Sent) {
+  # $Sent is deliberately untyped: the search client hands back Edm.DateTimeOffset as a
+  # [datetime], and letting PowerShell stringify that uses the current culture - "06/29/2026
+  # 17:16:10" here, something else elsewhere. Both sides of a comparison would agree within one
+  # run, so this would never fail visibly, but the identity would silently change shape with
+  # the machine's locale. Round-trip format instead, in UTC, so it does not.
+  if ($null -eq $Sent) { return $null }
+  $sent = if ($Sent -is [datetime])       { $Sent.ToUniversalTime().ToString('o') }
+          elseif ($Sent -is [datetimeoffset]) { $Sent.UtcDateTime.ToString('o') }
+          else                            { "$Sent".Trim() }
+  if ([string]::IsNullOrWhiteSpace($From) -or [string]::IsNullOrWhiteSpace($sent)) { return $null }
+  $s = ($Subject -replace '\s+', ' ').Trim().ToLowerInvariant()
+  $f = ($From    -replace '\s+', ' ').Trim().ToLowerInvariant()
+  return ($s + '|' + $f + '|' + $sent)
 }
 
 if ($SelfTest) {
@@ -144,6 +178,33 @@ if ($SelfTest) {
   # attachment stand in as the surviving copy of a message that is actually gone.
   Check 'attachment is not a message' (Get-MessageStem '100.079/Emails/Attachments/k073/2026-07-30 MO.pdf') $null
   Check 'other extension ignored'     (Get-MessageStem '100.079/Emails/CMC re POS [k073].pdf')              $null
+
+  Write-Host ''
+  Write-Host 'message identity:'
+  # The subject alone cannot tell two messages apart. Sender and sent-date can, and the index
+  # holds both for the orphan itself, so they are used wherever they exist.
+  Check 'same message, different filename' `
+    ((Get-MessageIdentity 'RE: Claim 23-7025944' 'a@x.com' '2026-08-01T10:00:00Z') -eq
+     (Get-MessageIdentity 'RE:  Claim 23-7025944 ' 'A@X.com ' '2026-08-01T10:00:00Z')) $true
+  Check 'same subject, different sender'   `
+    ((Get-MessageIdentity '(no subject)' 'a@x.com' '2026-08-01T10:00:00Z') -eq
+     (Get-MessageIdentity '(no subject)' 'b@x.com' '2026-08-01T10:00:00Z')) $false
+  Check 'same subject, different sent date' `
+    ((Get-MessageIdentity '(no subject)' 'a@x.com' '2026-08-01T10:00:00Z') -eq
+     (Get-MessageIdentity '(no subject)' 'a@x.com' '2026-08-02T10:00:00Z')) $false
+  # Absent fields must yield $null, NOT a key that collides with every other field-less
+  # document - which is what makes the caller fall back to the stem instead of guessing.
+  Check 'no sender is not an identity'    (Get-MessageIdentity '(no subject)' ''      '2026-08-01T10:00:00Z') $null
+  Check 'no sent date is not an identity' (Get-MessageIdentity '(no subject)' 'a@x.com' '')                   $null
+  Check 'null sent date is not an identity' (Get-MessageIdentity '(no subject)' 'a@x.com' $null)               $null
+  # The index returns sent_date as a [datetime]; two equal instants must give one key whatever
+  # the machine's culture or offset says, or the identity changes shape between machines.
+  Check 'datetime is locale-independent' `
+    ((Get-MessageIdentity 's' 'a@x.com' ([datetime]::new(2026,8,1,10,0,0,[DateTimeKind]::Utc))) -eq
+     's|a@x.com|2026-08-01T10:00:00.0000000Z') $true
+  Check 'equal instants in different zones agree' `
+    ((Get-MessageIdentity 's' 'a@x.com' ([datetimeoffset]::new(2026,8,1,12,0,0,[timespan]::FromHours(2)))) -eq
+     (Get-MessageIdentity 's' 'a@x.com' ([datetime]::new(2026,8,1,10,0,0,[DateTimeKind]::Utc)))) $true
   Write-Host ''
   if ($fail.Count) { Write-Host "$($fail.Count) control(s) misbehaved: $($fail -join ', ')"; exit 1 }
   Write-Host 'all message-stem controls behaved as specified.'
@@ -200,6 +261,8 @@ Write-Host "documents in index: $total"
 
 $seen = New-Object 'System.Collections.Generic.HashSet[string]'
 $orphans = @(); $undecodable = 0
+# message identity -> present, for every document whose blob still exists
+$survivingIdent = @{}
 
 # Partitions, each small enough to page through with $skip.
 #
@@ -254,7 +317,10 @@ foreach ($p in $parts) {
   while ($true) {
     $body = @{
       search  = '*'
-      select  = 'metadata_storage_path,metadata_storage_name'
+      # The identity fields ride along on a scan that already visits every document, so they
+      # cost no extra request. They are what lets a survivor be matched to an orphan by the
+      # message rather than by its subject line.
+      select  = 'metadata_storage_path,metadata_storage_name,metadata_subject,metadata_message_from,sent_date'
       filter  = $p
       top     = 1000
       skip    = $skip
@@ -269,8 +335,14 @@ foreach ($p in $parts) {
       $url = Decode $d.metadata_storage_path
       if (-not $url -or -not $url.StartsWith($base, 'OrdinalIgnoreCase')) { $undecodable++; continue }
       $name = [uri]::UnescapeDataString($url.Substring($base.Length))
-      if (-not $blobs.Contains($name)) {
-        $orphans += [pscustomobject]@{ Key = $d.metadata_storage_path; Blob = $name; Name = $d.metadata_storage_name }
+      $ident = Get-MessageIdentity "$($d.metadata_subject)" "$($d.metadata_message_from)" "$($d.sent_date)"
+      if ($blobs.Contains($name)) {
+        # Its blob is present, so this document IS a surviving copy. Record what message it is.
+        if ($ident) { $survivingIdent[$ident] = $true }
+      } else {
+        $orphans += [pscustomobject]@{
+          Key = $d.metadata_storage_path; Blob = $name; Name = $d.metadata_storage_name; Ident = $ident
+        }
       }
     }
     $skip += $n
@@ -330,7 +402,7 @@ $results = $orphans | ForEach-Object -ThrottleLimit 24 -Parallel {
     try { $status = (Invoke-WebRequest -Uri $u -Method Head -Headers $h -SkipHttpErrorCheck).StatusCode; break }
     catch { Start-Sleep -Milliseconds (200 * $try) }
   }
-  [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name; Status = $status }
+  [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name; Ident = $_.Ident; Status = $status }
 }
 
 $present = @($results | Where-Object Status -eq 200)
@@ -348,15 +420,36 @@ if ($unknown.Count) {
     throw "too many indeterminate results ($($unknown.Count) of $($results.Count)) - refusing to propose deletions"
   }
 }
-$orphans = @($missing | ForEach-Object { [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name } })
+$orphans = @($missing | ForEach-Object { [pscustomobject]@{ Key = $_.Key; Blob = $_.Blob; Name = $_.Name; Ident = $_.Ident } })
 
-$redundant = @(); $unbacked = @()
+<#
+Where the orphan's own document carries sender and sent-date, that decides it - and it decides
+it ALONE. The stem is not consulted as a second chance, because the whole point is that the
+stem says yes far too often: one surviving "(no subject)" blob matches the stem of 5,568 other
+"(no subject)" messages, and treating either signal as sufficient would let the weak one
+license every deletion the strong one refuses.
+
+Only when the document has no sender or no sent-date (6% of message documents) does the stem
+decide, which is the behaviour this script has always had.
+
+The effect is to move orphans from "redundant" to "unbacked" - from deleted by default to
+skipped and reported. That is the safe direction: an unbacked orphan is a broken row left in
+the index, a wrongly-redundant one is the erasure of the only record a message existed.
+#>
+$redundant = @(); $unbacked = @(); $byIdent = 0; $byStem = 0
 foreach ($o in $orphans) {
   $survives = $false
-  $k = Get-MessageStem $o.Blob
-  if ($k) { $survives = $stems.ContainsKey($k) }
+  if ($o.Ident) {
+    $survives = $survivingIdent.ContainsKey($o.Ident)
+    $byIdent++
+  } else {
+    $k = Get-MessageStem $o.Blob
+    if ($k) { $survives = $stems.ContainsKey($k) }
+    $byStem++
+  }
   if ($survives) { $redundant += $o } else { $unbacked += $o }
 }
+Write-Host ("  decided by message identity (sender+sent date): {0}; by subject stem only: {1}" -f $byIdent, $byStem)
 
 Write-Host "`n=== orphaned index documents ==="
 Write-Host ("  {0,6}  total orphans (row shows in search, download returns 404)" -f $orphans.Count)
